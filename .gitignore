@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Tools
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# evcide local state
+.evcide/
+
+# Zephyr / west / nRF Connect build outputs that may land in user project trees
+build/
+*.hex
+*.bin
+*.uf2
+*.elf
+.west/

@@ -1,0 +1,59 @@
+{
+  "id": "xiao_imu_stream_quality_v1",
+  "target": "seeed_xiao_nrf52840_sense",
+  "description": "Soham's demo path. Verifies an IMU sample is reaching the receiver at ~50 Hz with non-frozen, non-NaN acceleration fields.",
+  "timeout_ms": 12000,
+  "receivers": [
+    {
+      "type": "serial",
+      "port": "auto",
+      "baud": 115200
+    }
+  ],
+  "expectations": [
+    {
+      "kind": "contains",
+      "pattern": "BOOT_OK",
+      "within_ms": 3000,
+      "label": "firmware booted"
+    },
+    {
+      "kind": "field_present",
+      "field": "ax",
+      "label": "acceleration X field present"
+    },
+    {
+      "kind": "field_present",
+      "field": "ay",
+      "label": "acceleration Y field present"
+    },
+    {
+      "kind": "field_present",
+      "field": "az",
+      "label": "acceleration Z field present"
+    },
+    {
+      "kind": "field_range",
+      "field": "ax",
+      "value_min": -20.0,
+      "value_max": 20.0,
+      "label": "ax within plausible m/s^2"
+    },
+    {
+      "kind": "field_not_frozen",
+      "field": "ax",
+      "label": "ax must change across samples (sensor not stuck)"
+    },
+    {
+      "kind": "no_nan",
+      "field": "ax",
+      "label": "ax never NaN"
+    },
+    {
+      "kind": "message_rate_hz",
+      "expected_rate_hz": 50.0,
+      "rate_tolerance_pct": 40.0,
+      "label": "IMU sample rate within ~50 Hz +/- 40%"
+    }
+  ]
+}

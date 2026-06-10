@@ -1,0 +1,27 @@
+{
+  "id": "blink_serial_v1",
+  "target": "seeed_xiao_nrf52840_sense",
+  "description": "Smallest verifiable behavior: BOOT_OK appears on serial, then heartbeats.",
+  "timeout_ms": 8000,
+  "receivers": [
+    {
+      "type": "serial",
+      "port": "auto",
+      "baud": 115200
+    }
+  ],
+  "expectations": [
+    {
+      "kind": "contains",
+      "pattern": "BOOT_OK",
+      "within_ms": 3000,
+      "label": "boot banner reached main()"
+    },
+    {
+      "kind": "count_min",
+      "pattern": "HEARTBEAT",
+      "count": 3,
+      "label": "at least 3 heartbeats during the window"
+    }
+  ]
+}
