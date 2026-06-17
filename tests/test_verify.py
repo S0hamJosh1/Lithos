@@ -6,7 +6,6 @@ Proves the contract -> measurable PASS/FAIL pipeline works end-to-end.
 from __future__ import annotations
 
 import asyncio
-import math
 import sys
 from pathlib import Path
 
@@ -104,7 +103,7 @@ async def test_count_min_pass_after_n(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_field_not_frozen_detects_stuck_sensor(monkeypatch):
-    events = [_ev(f"ax=1.0 ay=2.0 az=9.8", 100 + i * 20, {"ax": 1.0, "ay": 2.0, "az": 9.8})
+    events = [_ev("ax=1.0 ay=2.0 az=9.8", 100 + i * 20, {"ax": 1.0, "ay": 2.0, "az": 9.8})
               for i in range(10)]
     monkeypatch.setattr(receivers, "get_receiver_stream",
                         lambda k: _make_synthetic_stream(events))

@@ -16,9 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 import re
-import uuid
 from typing import AsyncIterator
 
 from .models import OutputSession, ReceiverKind, RuntimeEvent, now_ms
@@ -99,7 +97,7 @@ async def serial_receiver_stream(
         from serial import SerialException
         try:
             ser = ps.Serial(port, baud, timeout=0.1)
-        except SerialException as e:
+        except SerialException:
             loop.call_soon_threadsafe(queue.put_nowait, b"")
             return
         try:

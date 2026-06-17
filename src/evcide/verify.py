@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,13 +19,11 @@ from .models import (
     ExpectationKind,
     OutputSession,
     ReceiverKind,
-    RepairHint,
     RuntimeEvent,
     RuntimeEvidence,
     VerificationContract,
     VerificationResult,
     iso_now,
-    now_ms,
 )
 from . import receivers
 
@@ -281,7 +278,6 @@ async def run_verification(
     the run live over a WebSocket. The HTTP response still returns the result.
     """
     started_at = iso_now()
-    start_ms = now_ms()
 
     states = [ExpectationState(expectation=e) for e in contract.expectations]
     events_seen: list[RuntimeEvent] = []

@@ -7,7 +7,7 @@ This is the moat path — Soham's research-lab board.
 """
 from __future__ import annotations
 
-import asyncio
+import re
 import shutil
 import time
 import uuid
@@ -147,8 +147,7 @@ class NRF52Adapter(BoardAdapter):
         root.mkdir(parents=True, exist_ok=True)
         (root / "src").mkdir(exist_ok=True)
 
-        board = config.profile_id.replace("_", "_")  # west uses underscored names; XIAO is
-                                                     # `xiao_ble` or `xiao_ble_sense` in Zephyr tree.
+        # west uses underscored Zephyr board names (e.g. XIAO is `xiao_ble_sense`).
         zephyr_board = {
             "seeed_xiao_nrf52840_sense": "xiao_ble_sense",
             "nrf52840_dk": "nrf52840dk_nrf52840",
@@ -352,8 +351,6 @@ class NRF52Adapter(BoardAdapter):
 
 
 # ============ Diagnostic + failure parsers ============
-
-import re
 
 _GCC_DIAG_RE = re.compile(
     r"^(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+):\s+"
