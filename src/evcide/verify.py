@@ -270,9 +270,15 @@ async def run_verification(
     session: OutputSession,
     contract: VerificationContract,
     adapter=None,
+    sink=None,
 ) -> VerificationResult:
     """Open the session's receiver, evaluate every expectation against the
     live stream, settle on timeout or first-failure-and-cannot-recover.
+
+    If `sink` is given (an async callable taking a dict), each RuntimeEvent is
+    published as ``{"type": "event", ...}`` while streaming and the final
+    VerificationResult as ``{"type": "result", ...}``, so the frontend can watch
+    the run live over a WebSocket. The HTTP response still returns the result.
     """
     started_at = iso_now()
     start_ms = now_ms()
@@ -298,6 +304,8 @@ async def run_verification(
                 last_ev_ms = ev.timestamp_ms
                 if len(sample_events) < 12:
                     sample_events.append(ev)
+                if sink is not None:
+                    await sink({"type": "event", "data": ev.model_dump(mode="json")})
                 elapsed = ev.timestamp_ms - first_ev_ms
                 for st in states:
                     if st.pass_seen and st.fail_seen:
@@ -375,6 +383,9 @@ async def run_verification(
 
     if adapter is not None and overall != "pass":
         result.repair_hints = await adapter.repair_hints(result)
+
+    if sink is not None:
+        await sink({"type": "result", "data": result.model_dump(mode="json")})
 
     return result
 

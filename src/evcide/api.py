@@ -11,9 +11,11 @@ Endpoints map directly to the agent loop (PDF Section 17):
                                     FlashResult / VerificationResult)
   GET  /wal/tail                    inspect telemetry
 """
-from __future__ import annotations
-
-import asyncio
+# NOTE: intentionally NO `from __future__ import annotations` here. The request
+# body models are defined inside create_app(); stringized annotations would be
+# unresolvable by FastAPI (it resolves them against module globals), making every
+# POST endpoint silently treat its body model as a query param. Real annotations
+# keep them introspectable.
 import contextlib
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -21,6 +23,8 @@ from pydantic import BaseModel
 
 from . import wal
 from .adapters import detect_all_boards, get_adapter_for_profile
+from .eventbus import bus
+from .verify import run_verification
 from .models import (
     DetectedBoard,
     OutputConfig,
@@ -116,6 +120,9 @@ def create_app() -> FastAPI:
         profile_id: str
         board_id: str
         contract: VerificationContract
+        #: Optional correlation id. Open a WS to /streams/{stream_id} first, then
+        #: POST /verify with the same id to watch the run live.
+        stream_id: str | None = None
 
     @app.post("/verify")
     async def verify(body: VerifyBody):
@@ -138,7 +145,25 @@ def create_app() -> FastAPI:
             file_path=rdef.file_path,
         )
         session = await adapter.open_output_channel(match, cfg)
-        result = await adapter.verify(session, body.contract)
+
+        # Live streaming: publish events + result to the bus under the caller's
+        # correlation id. The verify engine is adapter-agnostic, so we call it
+        # directly (passing the adapter for repair hints) to thread the sink in.
+        topic = body.stream_id
+        sink = None
+        if topic:
+            bus.reset(topic)
+
+            async def sink(msg, _t=topic):
+                await bus.publish(_t, msg)
+
+        try:
+            result = await run_verification(
+                session, body.contract, adapter=adapter, sink=sink
+            )
+        finally:
+            if topic:
+                bus.close(topic)
         wal.append("verify", {
             "contract_id": body.contract.id,
             "status": result.status,
@@ -153,23 +178,21 @@ def create_app() -> FastAPI:
     async def wal_tail(n: int = 50):
         return wal.tail(n=n)
 
-    # ----- Live stream (placeholder until full event-bus wiring) -----
+    # ----- Live stream -----
 
     @app.websocket("/streams/{stream_id}")
     async def stream(ws: WebSocket, stream_id: str):
+        """Forward every bus message for this correlation id to the frontend.
+
+        Replays anything already published (so connecting a beat after /verify
+        starts still delivers early events), then streams live until the topic
+        is closed at end-of-verify.
+        """
         await ws.accept()
         try:
-            # MVP: send WAL records as they appear. Full impl: bridge into a
-            # per-session pub/sub so verify can stream events live.
             with contextlib.suppress(WebSocketDisconnect):
-                last_n = 0
-                while True:
-                    records = wal.tail(n=200)
-                    if len(records) > last_n:
-                        for r in records[last_n:]:
-                            await ws.send_json(r)
-                        last_n = len(records)
-                    await asyncio.sleep(0.5)
+                async for msg in bus.subscribe(stream_id):
+                    await ws.send_json(msg)
         except WebSocketDisconnect:
             return
 

@@ -35,7 +35,7 @@
 |---|---|---|---|
 | 0 | Fix test-harness binding bug → green baseline | DONE | yes |
 | 1 | Wire timing windows (`within_ms` / `after_ms`) into checks | DONE | yes |
-| 2 | Live event bus + real WebSocket streaming to frontend | TODO | yes (TestClient) |
+| 2 | Live event bus + real WebSocket streaming to frontend | DONE | yes (TestClient) |
 | 3 | Socket receiver (real, loopback-testable) + `socket_reachable` | TODO | yes (loopback) |
 | 4 | Project classifier (`/projects/import` without `profile_id`) | TODO | yes |
 | 5 | BLE receiver via `bleak` | TODO | HW |
@@ -43,7 +43,32 @@
 | 7 | ESP32 adapter (idf.py / esptool) + WiFi socket verify | TODO | HW |
 | 8 | Repair-loop v2 (classifier → targeted LLM fix prompts) | TODO | partial |
 
+## Known debt
+- Pre-existing ruff nits in the scaffold (unused imports in `verify.py` /
+  `receivers.py` / `nrf52.py`, an unused `start_ms`, f-string-without-placeholder,
+  and the `sys.path` E402s in tests). Left untouched to keep each phase's diff
+  scoped and attributable; clean up in a dedicated lint pass.
+
 ## Changelog (newest first)
+
+### Phase 2 — live event bus + WebSocket streaming
+- New `eventbus.py`: stdlib-asyncio pub/sub keyed by a client correlation id,
+  with a bounded replay buffer so a subscriber that connects just after /verify
+  starts still gets the early events (the frontend opens the WS and POSTs /verify
+  as two separate calls — we must not depend on their ordering).
+- `run_verification` gained an optional async `sink`; it publishes each event as
+  `{"type":"event"}` and the final result as `{"type":"result"}`. The HTTP
+  response still returns the result, so the WS is purely additive.
+- `/verify` accepts an optional `stream_id`; `/streams/{id}` now subscribes to the
+  bus instead of polling the WAL.
+- **Two pre-existing bugs fixed in passing** (both were invisible because the
+  scaffold had no API tests): (1) `adapters/__init__.py` never re-exported
+  `get_adapter_for_profile`, so `import evcide.api` raised ImportError; (2)
+  `api.py` had `from __future__ import annotations`, which stringized the
+  request-body annotations — and since the body models are defined *inside*
+  `create_app()`, FastAPI couldn't resolve them and treated every POST body as a
+  query param (all POST endpoints returned 422). Removed the future-import.
+- 7 new tests (5 bus unit + 2 full `/verify`→WS via `TestClient`). 16/16 green.
 
 ### Phase 1 — timing windows
 - `within_ms` / `after_ms` were declared on `Expectation` but never read, so the
@@ -64,5 +89,3 @@
 - **Fix:** import the module (`from . import receivers`) and call
   `receivers.get_receiver_stream(...)` at use-time so monkeypatch (and any future
   swap) actually rebinds. One-line-class fix; no behavior change on real hardware.
-</content>
-</invoke>
