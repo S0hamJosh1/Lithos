@@ -246,6 +246,19 @@ def _update_no_nan(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
         st.pass_seen = True
 
 
+def _update_socket_reachable(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
+    """Pass once the socket receiver connects (or sends anything); fail on an
+    explicit unreachable event. See receivers.socket_receiver_stream.
+    """
+    if ev.type == "unreachable":
+        st.fail_seen = True
+        st.evidence_event_ids.append(idx)
+        st.message = f"socket unreachable: {ev.raw}"
+    elif ev.source == ReceiverKind.SOCKET and ev.type in ("connect", "line"):
+        st.pass_seen = True
+        st.evidence_event_ids.append(idx)
+
+
 _UPDATERS = {
     ExpectationKind.CONTAINS: _update_contains,
     ExpectationKind.NOT_CONTAINS: _update_not_contains,
@@ -258,6 +271,7 @@ _UPDATERS = {
     ExpectationKind.FIELD_RANGE: _update_field_range,
     ExpectationKind.FIELD_NOT_FROZEN: _update_field_not_frozen,
     ExpectationKind.NO_NAN: _update_no_nan,
+    ExpectationKind.SOCKET_REACHABLE: _update_socket_reachable,
 }
 
 

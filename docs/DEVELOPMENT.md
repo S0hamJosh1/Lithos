@@ -36,7 +36,7 @@
 | 0 | Fix test-harness binding bug → green baseline | DONE | yes |
 | 1 | Wire timing windows (`within_ms` / `after_ms`) into checks | DONE | yes |
 | 2 | Live event bus + real WebSocket streaming to frontend | DONE | yes (TestClient) |
-| 3 | Socket receiver (real, loopback-testable) + `socket_reachable` | TODO | yes (loopback) |
+| 3 | Socket receiver (real, loopback-testable) + `socket_reachable` | DONE | yes (loopback) |
 | 4 | Project classifier (`/projects/import` without `profile_id`) | TODO | yes |
 | 5 | BLE receiver via `bleak` | TODO | HW |
 | 6 | STM32 adapter (OpenOCD/CubeProgrammer) | TODO | HW |
@@ -50,6 +50,19 @@
   scoped and attributable; clean up in a dedicated lint pass.
 
 ## Changelog (newest first)
+
+### Phase 3 — socket receiver + socket_reachable
+- Replaced the `socket_receiver_stream` stub with a real asyncio TCP line
+  receiver (for WiFi/Ethernet boards e.g. ESP32). Emits a `connect` event on
+  success (so a reachable-but-silent endpoint still proves reachability), one
+  `line` event per newline frame, and a single `unreachable` event on failure.
+- The connect is bounded by `_SOCKET_CONNECT_TIMEOUT_S` so a **blackholed host**
+  (board not on the network — connect would hang forever) surfaces as
+  `unreachable` instead of looking like a silent no-data timeout.
+- New `socket_reachable` check wired into the engine.
+- 2 loopback tests (real ephemeral-port asyncio server, no hardware, no receiver
+  monkeypatch). Note: connection-refused latency is ~2s on Windows, so the
+  unreachable test budgets 6s. 18/18 green.
 
 ### Phase 2 — live event bus + WebSocket streaming
 - New `eventbus.py`: stdlib-asyncio pub/sub keyed by a client correlation id,

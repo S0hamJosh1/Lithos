@@ -24,6 +24,9 @@ from .models import OutputSession, ReceiverKind, RuntimeEvent, now_ms
 # Match `key=value` pairs in serial output for parsed-field extraction.
 _KV_RE = re.compile(r"(\w+)\s*=\s*(-?\d+(?:\.\d+)?|\w+)")
 
+# Max seconds to wait for a socket connection before declaring the host unreachable.
+_SOCKET_CONNECT_TIMEOUT_S = 5.0
+
 
 def _parse_serial_line(line: str) -> dict | None:
     """Best-effort parse of typical embedded log line conventions.
@@ -215,14 +218,63 @@ async def ble_receiver_stream(
 async def socket_receiver_stream(
     session: OutputSession, stop_event: asyncio.Event
 ) -> AsyncIterator[RuntimeEvent]:
-    """TCP/UDP/WebSocket receiver — STUB.
+    """TCP line receiver — for WiFi/Ethernet boards (e.g. ESP32) that stream
+    newline-delimited telemetry over a socket.
 
-    Real impl: open the configured socket, push each frame as a packet event.
-    For HTTP health endpoints, poll on an interval and emit health-check events.
+    Yields a ``connect`` event on a successful connection (so a reachable-but-
+    silent endpoint still proves reachability), then one ``line`` event per
+    newline-delimited frame. On connection failure it yields a single
+    ``unreachable`` event and returns, so a socket_reachable check fails with
+    evidence instead of looking like a silent no-data timeout.
     """
-    raise NotImplementedError("Socket receiver not implemented yet")
-    if False:                                    # pragma: no cover
-        yield                                    # type: ignore
+    cfg = session.config
+    host = cfg.socket_host
+    port = cfg.socket_port
+    if not host or not port:
+        raise ValueError("socket receiver requires config.socket_host and socket_port")
+
+    # Bound the connect so a blackholed host (board not on the network) surfaces as
+    # an unreachable event quickly, instead of hanging until the verification times
+    # out (which would look like a silent no-data result).
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=_SOCKET_CONNECT_TIMEOUT_S
+        )
+    except (OSError, asyncio.TimeoutError) as e:
+        reason = "connect timeout" if isinstance(e, asyncio.TimeoutError) else str(e)
+        yield RuntimeEvent(
+            source=ReceiverKind.SOCKET, timestamp_ms=now_ms(),
+            board_id=session.board_id, stream_id=session.stream_id,
+            type="unreachable", raw=reason, metadata={"host": host, "port": port},
+        )
+        return
+
+    yield RuntimeEvent(
+        source=ReceiverKind.SOCKET, timestamp_ms=now_ms(),
+        board_id=session.board_id, stream_id=session.stream_id,
+        type="connect", raw=None, metadata={"host": host, "port": port},
+    )
+    try:
+        while not stop_event.is_set():
+            try:
+                raw = await asyncio.wait_for(reader.readline(), timeout=0.25)
+            except asyncio.TimeoutError:
+                continue
+            if not raw:
+                break  # EOF — peer closed the connection
+            text = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+            if not text:
+                continue
+            yield RuntimeEvent(
+                source=ReceiverKind.SOCKET, timestamp_ms=now_ms(),
+                board_id=session.board_id, stream_id=session.stream_id,
+                type="line", raw=text, parsed=_parse_serial_line(text),
+                metadata={"host": host, "port": port},
+            )
+    finally:
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
 
 
 async def ros_receiver_stream(
