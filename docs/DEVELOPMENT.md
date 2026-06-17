@@ -37,8 +37,8 @@
 | 1 | Wire timing windows (`within_ms` / `after_ms`) into checks | DONE | yes |
 | 2 | Live event bus + real WebSocket streaming to frontend | DONE | yes (TestClient) |
 | 3 | Socket receiver (real, loopback-testable) + `socket_reachable` | DONE | yes (loopback) |
-| 4 | Project classifier (`/projects/import` without `profile_id`) | TODO | yes |
-| 5 | BLE receiver via `bleak` | TODO | HW |
+| 4 | Project classifier (`/projects/import` without `profile_id`) | DONE | yes |
+| 5 | BLE receiver via `bleak` | WIP | HW |
 | 6 | STM32 adapter (OpenOCD/CubeProgrammer) | TODO | HW |
 | 7 | ESP32 adapter (idf.py / esptool) + WiFi socket verify | TODO | HW |
 | 8 | Repair-loop v2 (classifier → targeted LLM fix prompts) | TODO | partial |
@@ -50,6 +50,16 @@
   scoped and attributable; clean up in a dedicated lint pass.
 
 ## Changelog (newest first)
+
+### Phase 4 — project classifier
+- New `classify.py`: infers board profile + toolchain from on-disk markers
+  (PlatformIO `board=`, Zephyr `prj.conf` + CMake `set(BOARD ...)`, ESP-IDF
+  `sdkconfig`, Pico SDK, Arduino sketch). Evidence-based, ordered strongest-first,
+  returns None rather than guessing when undeterminable.
+- `/projects/import` now classifies when `profile_id` is omitted (was a hard 400),
+  returns `{metadata, classification}`, and maps an unimplemented adapter's
+  `NotImplementedError` to a 501 instead of a 500.
+- 11 tests (9 classifier unit + 2 API). 29/29 green.
 
 ### Phase 3 — socket receiver + socket_reachable
 - Replaced the `socket_receiver_stream` stub with a real asyncio TCP line

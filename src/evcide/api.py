@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from . import wal
 from .adapters import detect_all_boards, get_adapter_for_profile
+from .classify import classify_project
 from .eventbus import bus
 from .verify import run_verification
 from .models import (
@@ -75,13 +76,26 @@ def create_app() -> FastAPI:
 
     @app.post("/projects/import")
     async def import_project(body: ImportProjectBody):
-        # If profile_id is omitted, we'd need a project classifier (planned).
-        if not body.profile_id:
-            raise HTTPException(400, "profile_id is required until project classifier ships")
-        adapter = get_adapter_for_profile(body.profile_id)
-        meta = await adapter.import_project(body.path)
-        wal.append("project.import", meta.model_dump())
-        return meta
+        # If profile_id is omitted, classify the project from on-disk markers.
+        classification = None
+        profile_id = body.profile_id
+        if not profile_id:
+            classification = classify_project(body.path)
+            if classification is None:
+                raise HTTPException(
+                    422, "could not classify project; pass profile_id explicitly"
+                )
+            profile_id = classification.profile_id
+        adapter = get_adapter_for_profile(profile_id)
+        try:
+            meta = await adapter.import_project(body.path)
+        except NotImplementedError as e:
+            raise HTTPException(501, str(e))
+        wal.append("project.import", {
+            **meta.model_dump(),
+            "classified": classification.model_dump() if classification else None,
+        })
+        return {"metadata": meta, "classification": classification}
 
     # ----- Build -----
 

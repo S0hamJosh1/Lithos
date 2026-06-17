@@ -88,6 +88,19 @@ class ProjectResult(BaseModel):
     error: str | None = None
 
 
+class ProjectClassification(BaseModel):
+    """Inferred board/toolchain for an imported project (PDF Section 14).
+
+    Produced by the project classifier when /projects/import is called without an
+    explicit profile_id.
+    """
+    profile_id: str
+    family: BoardFamily
+    framework: str
+    confidence: float                    # 0..1
+    evidence: list[str] = Field(default_factory=list)
+
+
 # ============ Build / Flash ============
 
 class Diagnostic(BaseModel):
