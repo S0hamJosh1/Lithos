@@ -34,7 +34,7 @@
 | Phase | Item | Status | Testable here? |
 |---|---|---|---|
 | 0 | Fix test-harness binding bug → green baseline | DONE | yes |
-| 1 | Wire timing windows (`within_ms` / `after_ms`) into checks | TODO | yes |
+| 1 | Wire timing windows (`within_ms` / `after_ms`) into checks | DONE | yes |
 | 2 | Live event bus + real WebSocket streaming to frontend | TODO | yes (TestClient) |
 | 3 | Socket receiver (real, loopback-testable) + `socket_reachable` | TODO | yes (loopback) |
 | 4 | Project classifier (`/projects/import` without `profile_id`) | TODO | yes |
@@ -44,6 +44,17 @@
 | 8 | Repair-loop v2 (classifier → targeted LLM fix prompts) | TODO | partial |
 
 ## Changelog (newest first)
+
+### Phase 1 — timing windows
+- `within_ms` / `after_ms` were declared on `Expectation` but never read, so the
+  demo contract's `contains BOOT_OK within_ms:3000` accepted a boot at any time
+  inside the 12s timeout. A slow-booting board passed — a real moat hole.
+- Timing is measured relative to the **first event on the stream** (≈ boot for a
+  freshly-opened receiver), which is consistent for synthetic streams and real
+  hardware. `after_ms` skips warm-up events before the window opens; `within_ms`
+  downgrades a check that only passed late — or never — to FAIL (a required
+  behavior that misses its deadline is a failure, not "inconclusive"). Rate
+  checks are exempt. 4 new tests.
 
 ### Phase 0 — green baseline
 - **Bug:** `verify.py` imported `get_receiver_stream` by name at module load, so

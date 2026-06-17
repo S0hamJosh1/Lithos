@@ -167,6 +167,29 @@ def _settle_rate(st: ExpectationState) -> None:
     st.pass_seen = True
 
 
+def _apply_within_ms(st: ExpectationState) -> None:
+    """Downgrade a check that only passed after its within_ms deadline.
+
+    Timing is relative to the first event on the stream (≈ boot for a
+    freshly-opened receiver). A deadline that is specified but never met — even
+    by absence of the event — is a FAIL, not inconclusive: the contract
+    *required* the behavior within the window. Rate checks are exempt; their
+    verdict comes from _settle_rate and has no per-event pass timestamp.
+    """
+    exp = st.expectation
+    deadline = exp.within_ms
+    if deadline is None or exp.kind == ExpectationKind.MESSAGE_RATE_HZ:
+        return
+    pass_at = st.actual.get("pass_at_ms")
+    if st.pass_seen and pass_at is not None and pass_at > deadline:
+        st.pass_seen = False
+        st.fail_seen = True
+        st.message = f"satisfied at {pass_at}ms, after within_ms deadline {deadline}ms"
+    elif not st.pass_seen and not st.fail_seen:
+        st.fail_seen = True
+        st.message = f"not satisfied within within_ms deadline {deadline}ms"
+
+
 def _update_field_present(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
     fname = st.expectation.field
     if fname and _ev_field(ev, fname) is not None:
@@ -275,13 +298,22 @@ async def run_verification(
                 last_ev_ms = ev.timestamp_ms
                 if len(sample_events) < 12:
                     sample_events.append(ev)
+                elapsed = ev.timestamp_ms - first_ev_ms
                 for st in states:
                     if st.pass_seen and st.fail_seen:
                         continue
                     updater = _UPDATERS.get(st.expectation.kind)
                     if updater is None:
                         continue
+                    exp = st.expectation
+                    # after_ms: ignore warm-up events before the window opens.
+                    if exp.after_ms is not None and elapsed < exp.after_ms:
+                        continue
+                    was_pass = st.pass_seen
                     updater(st, ev, idx)
+                    # Record when the check first reached PASS (for within_ms).
+                    if st.pass_seen and not was_pass and "pass_at_ms" not in st.actual:
+                        st.actual["pass_at_ms"] = elapsed
                 # short-circuit if every expectation already settled with pass
                 if all(s.pass_seen and not s.fail_seen for s in states):
                     break
@@ -304,6 +336,10 @@ async def run_verification(
     for st in states:
         if st.expectation.kind == ExpectationKind.MESSAGE_RATE_HZ:
             _settle_rate(st)
+
+    # Enforce within_ms deadlines now that we know when each check passed.
+    for st in states:
+        _apply_within_ms(st)
 
     checks = [st.settle() for st in states]
     overall = (

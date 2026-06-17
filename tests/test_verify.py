@@ -119,6 +119,77 @@ async def test_field_not_frozen_detects_stuck_sensor(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_within_ms_passes_when_boot_is_prompt(monkeypatch):
+    # BOOT_OK is the first event -> elapsed 0 -> well inside a 500ms deadline.
+    events = [_ev("BOOT_OK", 1000), _ev("HEARTBEAT 1", 1100)]
+    monkeypatch.setattr(receivers, "get_receiver_stream",
+                        lambda k: _make_synthetic_stream(events))
+    contract = VerificationContract(
+        id="w1", target="seeed_xiao_nrf52840_sense", timeout_ms=2000,
+        receivers=[ReceiverDef(type=ReceiverKind.SERIAL, port="auto")],
+        expectations=[Expectation(kind=ExpectationKind.CONTAINS, pattern="BOOT_OK",
+                                  within_ms=500)],
+    )
+    result = await run_verification(_session(), contract)
+    assert result.status == "pass"
+
+
+@pytest.mark.asyncio
+async def test_within_ms_fails_when_boot_is_late(monkeypatch):
+    # First event at t0=100; BOOT_OK only at +2000ms, past a 1000ms deadline.
+    events = [_ev("starting...", 100), _ev("BOOT_OK", 2100)]
+    monkeypatch.setattr(receivers, "get_receiver_stream",
+                        lambda k: _make_synthetic_stream(events))
+    contract = VerificationContract(
+        id="w2", target="seeed_xiao_nrf52840_sense", timeout_ms=3000,
+        receivers=[ReceiverDef(type=ReceiverKind.SERIAL, port="auto")],
+        expectations=[Expectation(kind=ExpectationKind.CONTAINS, pattern="BOOT_OK",
+                                  within_ms=1000)],
+    )
+    result = await run_verification(_session(), contract)
+    assert result.status == "fail"
+    assert "within_ms" in result.checks[0].message
+
+
+@pytest.mark.asyncio
+async def test_within_ms_fails_when_never_satisfied(monkeypatch):
+    # Events present (so not a no-data case) but the token never appears.
+    events = [_ev("noise", 100), _ev("more noise", 200)]
+    monkeypatch.setattr(receivers, "get_receiver_stream",
+                        lambda k: _make_synthetic_stream(events))
+    contract = VerificationContract(
+        id="w3", target="seeed_xiao_nrf52840_sense", timeout_ms=1000,
+        receivers=[ReceiverDef(type=ReceiverKind.SERIAL, port="auto")],
+        expectations=[Expectation(kind=ExpectationKind.CONTAINS, pattern="BOOT_OK",
+                                  within_ms=500)],
+    )
+    result = await run_verification(_session(), contract)
+    assert result.status == "fail"
+    assert result.checks[0].status == "fail"
+
+
+@pytest.mark.asyncio
+async def test_after_ms_skips_warmup_events(monkeypatch):
+    # First sample is out-of-range warm-up garbage; after_ms gates it out so the
+    # later in-range samples make the check pass.
+    events = [
+        _ev("ax=99.0", 100, {"ax": 99.0}),     # elapsed 0, would FAIL field_range
+        _ev("ax=1.0", 700, {"ax": 1.0}),       # elapsed 600, in range
+        _ev("ax=2.0", 900, {"ax": 2.0}),       # elapsed 800, in range
+    ]
+    monkeypatch.setattr(receivers, "get_receiver_stream",
+                        lambda k: _make_synthetic_stream(events))
+    contract = VerificationContract(
+        id="a1", target="seeed_xiao_nrf52840_sense", timeout_ms=2000,
+        receivers=[ReceiverDef(type=ReceiverKind.SERIAL, port="auto")],
+        expectations=[Expectation(kind=ExpectationKind.FIELD_RANGE, field="ax",
+                                  value_min=-20.0, value_max=20.0, after_ms=500)],
+    )
+    result = await run_verification(_session(), contract)
+    assert result.status == "pass", result.checks[0].message
+
+
+@pytest.mark.asyncio
 async def test_message_rate_in_band(monkeypatch):
     # 50 Hz nominal -> one sample every 20ms over 500ms = 25 samples
     events = [_ev(f"tick {i}", 100 + i * 20, {"i": i}) for i in range(25)]
