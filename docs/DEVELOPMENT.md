@@ -51,6 +51,11 @@
 
 ## Changelog (newest first)
 
+### Test hardening — API endpoint coverage
+- Added `test_api_endpoints.py`: `/boards`, `/projects/create` (writes real files
+  to a tmp dir), `/build` and `/flash` graceful no-`west` paths (skipped if `west`
+  is installed), `/flash` 404-when-board-absent, `/wal/tail`. 6 tests. 40/40 green.
+
 ### Phase 5 — BLE receiver (*receiver HW-untested)
 - Replaced the BLE stub with a real `bleak` implementation: scans for
   advertisements (filterable by name/address/service UUID), and — when a
