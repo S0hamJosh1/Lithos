@@ -246,6 +246,37 @@ def _update_no_nan(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
         st.pass_seen = True
 
 
+def _update_ble_advertising(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
+    """Pass when a BLE advertisement is seen; if pattern is set, the advertised
+    name must contain it.
+    """
+    if ev.type != "advertisement":
+        return
+    want = st.expectation.pattern
+    if want:
+        name = str((ev.parsed or {}).get("name") or "")
+        if want.lower() not in name.lower():
+            return
+    st.pass_seen = True
+    st.evidence_event_ids.append(idx)
+
+
+def _update_gatt_service_present(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
+    """Pass when an event advertises/exposes the expected GATT service UUID."""
+    want = (st.expectation.service_uuid or "").lower()
+    if not want:
+        return
+    p = ev.parsed or {}
+    uuids: list[str] = []
+    if p.get("service_uuid") is not None:
+        uuids.append(str(p["service_uuid"]))
+    if isinstance(p.get("service_uuids"), list):
+        uuids.extend(str(u) for u in p["service_uuids"])
+    if any(want == u.lower() for u in uuids):
+        st.pass_seen = True
+        st.evidence_event_ids.append(idx)
+
+
 def _update_socket_reachable(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
     """Pass once the socket receiver connects (or sends anything); fail on an
     explicit unreachable event. See receivers.socket_receiver_stream.
@@ -272,6 +303,8 @@ _UPDATERS = {
     ExpectationKind.FIELD_NOT_FROZEN: _update_field_not_frozen,
     ExpectationKind.NO_NAN: _update_no_nan,
     ExpectationKind.SOCKET_REACHABLE: _update_socket_reachable,
+    ExpectationKind.BLE_ADVERTISING: _update_ble_advertising,
+    ExpectationKind.GATT_SERVICE_PRESENT: _update_gatt_service_present,
 }
 
 

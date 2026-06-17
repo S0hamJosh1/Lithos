@@ -196,23 +196,135 @@ async def file_receiver_stream(
         await asyncio.sleep(0.2)
 
 
-# ============ BLE / Socket / ROS — STUBS ============
+# ============ BLE ============
 
 async def ble_receiver_stream(
     session: OutputSession, stop_event: asyncio.Event
 ) -> AsyncIterator[RuntimeEvent]:
-    """BLE receiver — STUB.
+    """BLE receiver via `bleak`.
 
-    Real impl: use `bleak` to scan for advertisements + connect + subscribe
-    to GATT characteristics named in config.ble_filter. Yield advertisement,
-    service, characteristic, packet, RSSI events per PDF Section 20.
+    config.ble_filter keys (all optional):
+      name                  match if advertised local name contains this
+      address               match an exact device address
+      service_uuids         restrict the scan to these advertised service UUIDs
+      characteristic_uuid   if set, connect to the matched device and stream
+                            notifications from this GATT characteristic
+
+    Events emitted: ``advertisement`` per matching advert; then (only when a
+    characteristic_uuid is given) ``connect`` with the device's service-uuid list,
+    ``packet`` per notification, or ``unreachable`` if the connection fails.
+
+    NOTE: HARDWARE-UNTESTED. The advertisement/connect/packet event SHAPES are
+    covered by verify-engine tests with synthetic events, but this bleak code path
+    has not been run against a real radio. Validate on a XIAO before relying on it.
     """
-    raise NotImplementedError(
-        "BLE receiver not implemented yet. Install `pip install evcide[ble]` "
-        "and wire bleak per the PDF Section 24 spec."
-    )
-    if False:                                    # pragma: no cover  (typing)
-        yield                                    # type: ignore
+    cfg = session.config
+    flt = cfg.ble_filter or {}
+    name_match = flt.get("name")
+    address_match = flt.get("address")
+    service_uuids = flt.get("service_uuids")
+    char_uuid = flt.get("characteristic_uuid")
+
+    try:
+        from bleak import BleakClient, BleakScanner
+    except ImportError as e:
+        raise RuntimeError("bleak not installed; pip install evcide[ble]") from e
+
+    adv_queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
+    matched: dict = {"device": None}
+
+    def _matches(device, adv) -> bool:
+        if address_match and (device.address or "").lower() != address_match.lower():
+            return False
+        if name_match:
+            nm = adv.local_name or device.name or ""
+            if name_match.lower() not in nm.lower():
+                return False
+        return True
+
+    def _on_detect(device, adv):
+        ev = RuntimeEvent(
+            source=ReceiverKind.BLE, timestamp_ms=now_ms(),
+            board_id=session.board_id, stream_id=session.stream_id,
+            type="advertisement", raw=adv.local_name or device.name,
+            parsed={
+                "name": adv.local_name or device.name,
+                "address": device.address,
+                "rssi": adv.rssi,
+                "service_uuids": list(adv.service_uuids or []),
+            },
+        )
+        if _matches(device, adv):
+            if matched["device"] is None:
+                matched["device"] = device
+            with contextlib.suppress(asyncio.QueueFull):
+                adv_queue.put_nowait(ev)
+
+    scanner = BleakScanner(detection_callback=_on_detect, service_uuids=service_uuids)
+    await scanner.start()
+    try:
+        while not stop_event.is_set():
+            try:
+                ev = await asyncio.wait_for(adv_queue.get(), timeout=0.25)
+            except asyncio.TimeoutError:
+                if char_uuid and matched["device"] is not None:
+                    break
+                continue
+            yield ev
+            if char_uuid and matched["device"] is not None:
+                break
+    finally:
+        with contextlib.suppress(Exception):
+            await scanner.stop()
+
+    if not (char_uuid and matched["device"] and not stop_event.is_set()):
+        return
+
+    # Connect + subscribe to the requested notify characteristic.
+    device = matched["device"]
+    pkt_queue: asyncio.Queue = asyncio.Queue(maxsize=4096)
+
+    def _on_notify(_sender, data: bytearray):
+        text = bytes(data).decode("utf-8", errors="replace")
+        ev = RuntimeEvent(
+            source=ReceiverKind.BLE, timestamp_ms=now_ms(),
+            board_id=session.board_id, stream_id=session.stream_id,
+            type="packet", raw=text, parsed=_parse_serial_line(text),
+            metadata={"characteristic": char_uuid},
+        )
+        with contextlib.suppress(asyncio.QueueFull):
+            pkt_queue.put_nowait(ev)
+
+    try:
+        async with BleakClient(device) as client:
+            yield RuntimeEvent(
+                source=ReceiverKind.BLE, timestamp_ms=now_ms(),
+                board_id=session.board_id, stream_id=session.stream_id,
+                type="connect", raw=None,
+                parsed={
+                    "address": device.address,
+                    "service_uuids": [str(s.uuid) for s in client.services],
+                },
+            )
+            await client.start_notify(char_uuid, _on_notify)
+            try:
+                while not stop_event.is_set():
+                    try:
+                        yield await asyncio.wait_for(pkt_queue.get(), timeout=0.25)
+                    except asyncio.TimeoutError:
+                        continue
+            finally:
+                with contextlib.suppress(Exception):
+                    await client.stop_notify(char_uuid)
+    except Exception as e:
+        yield RuntimeEvent(
+            source=ReceiverKind.BLE, timestamp_ms=now_ms(),
+            board_id=session.board_id, stream_id=session.stream_id,
+            type="unreachable", raw=f"BLE connect failed: {e}",
+        )
+
+
+# ============ Socket / ROS ============
 
 
 async def socket_receiver_stream(

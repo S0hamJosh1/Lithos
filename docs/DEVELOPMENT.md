@@ -38,7 +38,7 @@
 | 2 | Live event bus + real WebSocket streaming to frontend | DONE | yes (TestClient) |
 | 3 | Socket receiver (real, loopback-testable) + `socket_reachable` | DONE | yes (loopback) |
 | 4 | Project classifier (`/projects/import` without `profile_id`) | DONE | yes |
-| 5 | BLE receiver via `bleak` | WIP | HW |
+| 5 | BLE receiver via `bleak` (+ ble_advertising / gatt_service_present checks) | IMPL* | checks: yes · receiver: HW |
 | 6 | STM32 adapter (OpenOCD/CubeProgrammer) | TODO | HW |
 | 7 | ESP32 adapter (idf.py / esptool) + WiFi socket verify | TODO | HW |
 | 8 | Repair-loop v2 (classifier → targeted LLM fix prompts) | TODO | partial |
@@ -50,6 +50,18 @@
   scoped and attributable; clean up in a dedicated lint pass.
 
 ## Changelog (newest first)
+
+### Phase 5 — BLE receiver (*receiver HW-untested)
+- Replaced the BLE stub with a real `bleak` implementation: scans for
+  advertisements (filterable by name/address/service UUID), and — when a
+  `characteristic_uuid` is given — connects and streams GATT notifications.
+  Emits advertisement/connect/packet/unreachable events.
+- **The bleak code path has NOT been run against a real radio** (no XIAO on this
+  box, bleak not installed). It is marked HW-untested in the docstring. What *is*
+  tested: the event SHAPES via the two new verify-side checks below, plus a clean
+  `RuntimeError` when bleak is absent.
+- New `ble_advertising` and `gatt_service_present` checks wired into the engine
+  and tested with synthetic BLE events. 5 new tests. 34/34 green.
 
 ### Phase 4 — project classifier
 - New `classify.py`: infers board profile + toolchain from on-disk markers
