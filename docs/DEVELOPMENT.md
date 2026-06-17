@@ -1,0 +1,57 @@
+# Lithos / evcide — Development Guidelines & Roadmap
+
+> Working doc for the autonomous build-out of the EVC-IDE backend. Source-of-truth
+> spec is Soham's `Embedded_Vibe_Coding_IDE_Master_Documentation_v2.pdf` (v2.0).
+
+## Coding guidelines (the rules this build follows)
+
+1. **Moat-first.** Every increment must strengthen *runtime verification* or its
+   delivery to the frontend (Void IDE). Flashing is a solved commodity; "did it
+   actually work on the hardware?" is the product. Build there first.
+2. **Hardware-independent and tested.** This build runs on a dev box with **no
+   XIAO board and no `west`**. Therefore every increment must be verifiable here:
+   synthetic event streams, loopback TCP sockets, FastAPI `TestClient`. No
+   "trust me, it works on hardware" code in the layers that *can* be tested
+   without hardware (verify engine, event bus, API, socket receiver).
+3. **Honest stubs only.** A not-yet-implemented path raises `NotImplementedError`
+   with a clear, actionable message. It never fakes a PASS. A verification engine
+   that lies is worse than useless. (Existing repo rule: no dead-deps theater.)
+4. **Match the house style.** pydantic v2 models; `from __future__ import
+   annotations`; full type hints; section headers `# ====== Name ======`; async
+   throughout; ruff line-length 100.
+5. **No regressions.** The full `pytest` suite is green after every increment.
+6. **Structure does the work.** Verification quality is enforced by measurement
+   against real output, not by policy/lint. Keep the contract → measurable check
+   pipeline the center of gravity.
+7. **Lazy senior dev.** stdlib before a dependency (`asyncio`, `socket`). Smallest
+   change that fully closes the gap. No speculative generality.
+
+## Status legend
+`DONE` shipped + tested · `WIP` in progress · `TODO` planned · `HW` needs real hardware to fully validate
+
+## Roadmap
+
+| Phase | Item | Status | Testable here? |
+|---|---|---|---|
+| 0 | Fix test-harness binding bug → green baseline | DONE | yes |
+| 1 | Wire timing windows (`within_ms` / `after_ms`) into checks | TODO | yes |
+| 2 | Live event bus + real WebSocket streaming to frontend | TODO | yes (TestClient) |
+| 3 | Socket receiver (real, loopback-testable) + `socket_reachable` | TODO | yes (loopback) |
+| 4 | Project classifier (`/projects/import` without `profile_id`) | TODO | yes |
+| 5 | BLE receiver via `bleak` | TODO | HW |
+| 6 | STM32 adapter (OpenOCD/CubeProgrammer) | TODO | HW |
+| 7 | ESP32 adapter (idf.py / esptool) + WiFi socket verify | TODO | HW |
+| 8 | Repair-loop v2 (classifier → targeted LLM fix prompts) | TODO | partial |
+
+## Changelog (newest first)
+
+### Phase 0 — green baseline
+- **Bug:** `verify.py` imported `get_receiver_stream` by name at module load, so
+  `monkeypatch.setattr(receivers, ...)` in the tests had no effect — the engine
+  used the real serial receiver against `/dev/null`, yielding zero events. 4/5
+  tests failed on a clean checkout.
+- **Fix:** import the module (`from . import receivers`) and call
+  `receivers.get_receiver_stream(...)` at use-time so monkeypatch (and any future
+  swap) actually rebinds. One-line-class fix; no behavior change on real hardware.
+</content>
+</invoke>

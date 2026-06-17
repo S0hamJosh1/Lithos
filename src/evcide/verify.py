@@ -28,7 +28,7 @@ from .models import (
     iso_now,
     now_ms,
 )
-from .receivers import get_receiver_stream
+from . import receivers
 
 
 # ============ Live evaluator state ============
@@ -261,7 +261,7 @@ async def run_verification(
     last_ev_ms: int | None = None
 
     stop_event = asyncio.Event()
-    stream_fn = get_receiver_stream(session.receiver)
+    stream_fn = receivers.get_receiver_stream(session.receiver)
 
     async def _consume():
         nonlocal first_ev_ms, last_ev_ms
