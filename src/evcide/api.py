@@ -25,6 +25,7 @@ from . import wal
 from .adapters import detect_all_boards, get_adapter_for_profile
 from .classify import classify_project
 from .eventbus import bus
+from .dsl import DSLError, parse_contract
 from .mutation import assess_contract
 from .verify import run_verification
 from .models import (
@@ -188,6 +189,25 @@ def create_app() -> FastAPI:
             "summary": result.agent_summary,
         })
         return result
+
+    # ----- Contract authoring (DSL → contract) -----
+
+    class ParseBody(BaseModel):
+        text: str
+        id: str = "dsl-contract"
+        target: str = ""
+        receiver: str = "serial"
+        timeout_ms: int = 10000
+
+    @app.post("/contracts/parse", response_model=VerificationContract)
+    async def parse(body: ParseBody) -> VerificationContract:
+        try:
+            return parse_contract(
+                body.text, id=body.id, target=body.target,
+                receiver=body.receiver, timeout_ms=body.timeout_ms,
+            )
+        except DSLError as e:
+            raise HTTPException(400, str(e)) from None
 
     # ----- Contract meaningfulness (break-on-purpose) -----
 

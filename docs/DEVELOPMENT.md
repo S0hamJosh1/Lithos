@@ -45,6 +45,9 @@
 | 9 | Break-on-purpose — contract mutation testing (`/contracts/assess`) | DONE | yes |
 | 10 | Closed repair loop — best-of-N + don't-game-the-metric (`run_repair_loop`) | IMPL* | orchestration: yes · provider/reverify: LLM/HW |
 | 10b | `SettingsFixProvider` — real deterministic config-class fixer (no LLM) | DONE | yes |
+| 11 | `NO_TIMEOUT` liveness check wired + assessable | DONE | yes |
+| 12 | Contract DSL — terse text → `VerificationContract` (`/contracts/parse`) | DONE | yes |
+
 
 ## Known debt
 - Pre-existing ruff nits in the scaffold (unused imports in `verify.py` /
@@ -53,6 +56,20 @@
   scoped and attributable; clean up in a dedicated lint pass.
 
 ## Changelog (newest first)
+
+### Phase 12 — contract DSL (terse text → contract)
+- The spec's "prompt → measurable expectations" (PDF 22.1), deterministic subset: one
+  expectation per line so a human or the frontend authors a contract without writing JSON.
+  `@id/@target/@receiver/@timeout` headers; `#` comments. Covers contains/not_contains,
+  sequence, count_*, rate (min/max/expected+tol), field present/range/not_frozen/no_nan,
+  no_timeout, ble_advertising, gatt_service, socket_reachable.
+- **Honest failure:** unparseable input raises `DSLError` with the line number + reason —
+  it never silently emits a wrong contract (a contract that means something other than you
+  intended is worse than a parse error). API maps it to 400.
+- New endpoint `POST /contracts/parse`. The output flows straight into the engine and
+  break-on-purpose (end-to-end test parses → evaluates → asserts meaningful). Full NL still
+  needs an LLM; this is the unambiguous common-case subset.
+- 9 tests (`test_dsl.py` + 1 API). 80/80 green, ruff clean.
 
 ### Phase 11 — NO_TIMEOUT liveness check (wired + assessable)
 - `NO_TIMEOUT` was declared but had no evaluator, so a liveness expectation silently

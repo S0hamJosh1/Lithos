@@ -120,3 +120,19 @@ def test_assess_endpoint_flags_theater_and_certifies_meaningful():
     body = theater.json()
     assert body["meaningful"] is False
     assert body["survived"] >= 1
+
+
+def test_parse_endpoint_builds_contract_and_400s_on_bad_dsl():
+    client = TestClient(create_app())
+    ok = client.post("/contracts/parse", json={
+        "text": "@id boot\ncontains BOOT_OK within_ms:3000\nno_timeout 1500",
+        "target": "seeed_xiao_nrf52840_sense",
+    })
+    assert ok.status_code == 200, ok.text
+    body = ok.json()
+    assert body["id"] == "boot"
+    assert len(body["expectations"]) == 2
+
+    bad = client.post("/contracts/parse", json={"text": "frobnicate X"})
+    assert bad.status_code == 400
+    assert "unknown directive" in bad.json()["detail"]
