@@ -26,6 +26,7 @@ from .models import (
     iso_now,
 )
 from . import receivers
+from . import repair
 
 
 # ============ Live evaluator state ============
@@ -424,8 +425,15 @@ async def run_verification(
         agent_summary=_summarize(overall, checks, events_seen, failure_class),
     )
 
-    if adapter is not None and overall != "pass":
-        result.repair_hints = await adapter.repair_hints(result)
+    # Repair loop v2: structured per-cause hints + an LLM-ready repair request.
+    # The adapter (if any) owns framework-specific hint detail; the engine always
+    # assembles the deterministic RepairRequest so the frontend/LLM can act on it.
+    if overall != "pass":
+        if adapter is not None:
+            result.repair_hints = await adapter.repair_hints(result)
+        else:
+            result.repair_hints = repair.build_repair_hints(result)
+        result.repair_request = repair.build_repair_request(result)
 
     if sink is not None:
         await sink({"type": "result", "data": result.model_dump(mode="json")})

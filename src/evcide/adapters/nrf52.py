@@ -300,54 +300,12 @@ class NRF52Adapter(BoardAdapter):
         return await run_verification(session, contract, adapter=self)
 
     async def repair_hints(self, result: VerificationResult) -> list[RepairHint]:
-        hints: list[RepairHint] = []
-        if result.status == "pass":
-            return hints
-        cls = result.failure_classification or ""
-        if cls == "no_serial_data":
-            hints.append(RepairHint(
-                classification=cls, severity="block",
-                suggestion="No bytes received on serial. Check CONFIG_UART_CONSOLE=y in prj.conf "
-                           "and that printk targets the USB CDC console.",
-                target_settings={"prj.conf": {"CONFIG_UART_CONSOLE": "y", "CONFIG_USB_DEVICE_STACK": "y"}},
-            ))
-        elif cls == "wrong_baud":
-            hints.append(RepairHint(
-                classification=cls, severity="warn",
-                suggestion="Receiver baud differs from board default 115200. Either change the "
-                           "contract receiver.baud or set DTS uart-config baud-rate.",
-            ))
-        elif cls == "boot_msg_missing":
-            hints.append(RepairHint(
-                classification=cls, severity="block",
-                suggestion="Expected BOOT_OK token not seen. Verify printk happens in main() before "
-                           "any blocking calls. Check reset hooks.",
-            ))
-        elif cls == "imu_frozen":
-            hints.append(RepairHint(
-                classification=cls, severity="block",
-                suggestion="IMU values are frozen across N samples. Likely sensor.read returned the "
-                           "cached frame; ensure sensor_sample_fetch() is called every loop.",
-            ))
-        elif cls == "rate_too_low":
-            hints.append(RepairHint(
-                classification=cls, severity="warn",
-                suggestion="Sample rate below contracted min. Inspect k_msleep / printk overhead; "
-                           "consider raising loop priority or moving prints off the hot path.",
-            ))
-        elif cls == "ble_not_advertising":
-            hints.append(RepairHint(
-                classification=cls, severity="block",
-                suggestion="BLE advertisement not seen. Verify CONFIG_BT=y and bt_enable() is called.",
-                target_settings={"prj.conf": {"CONFIG_BT": "y", "CONFIG_BT_PERIPHERAL": "y"}},
-            ))
-        else:
-            hints.append(RepairHint(
-                classification=cls or "unknown",
-                severity="info",
-                suggestion="Verification failed without a classified hint. Inspect raw evidence.",
-            ))
-        return hints
+        # Repair loop v2: delegate to the shared, data-driven repair layer with this
+        # adapter's framework so Zephyr-specific prj.conf settings are overlaid. The
+        # per-adapter hint ladder lived here in v1; it is now one shared brain.
+        from ..repair import build_repair_hints
+
+        return build_repair_hints(result, framework="zephyr")
 
 
 # ============ Diagnostic + failure parsers ============

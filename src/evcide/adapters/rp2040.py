@@ -72,4 +72,8 @@ class RP2040Adapter(BoardAdapter):
         raise NotImplementedError("RP2040 verification not implemented yet")
 
     async def repair_hints(self, result: VerificationResult) -> list[RepairHint]:
-        return []
+        # Repair loop v2: generic shared hints (no framework overlay for this board
+        # yet). New adapters get repair guidance for free via the shared layer.
+        from ..repair import build_repair_hints
+
+        return build_repair_hints(result)

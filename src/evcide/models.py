@@ -262,6 +262,31 @@ class RepairHint(BaseModel):
     target_settings: dict[str, Any] = Field(default_factory=dict)
 
 
+class RepairRequest(BaseModel):
+    """A deterministic, LLM-ready repair prompt assembled from a failed
+    verification — the classifier→targeted-prompt half of the repair loop
+    (PDF Section 23). Built with ZERO model calls; the actual fix generation is
+    an injected FixProvider boundary, so this artifact is fully testable here.
+    """
+    contract_id: str
+    overall_status: str                  # "fail" | "inconclusive"
+    failure_classifications: list[str] = Field(default_factory=list)  # de-duped, severity-ordered
+    failed_checks: list[CheckResult] = Field(default_factory=list)
+    hints: list[RepairHint] = Field(default_factory=list)
+    target_files: list[str] = Field(default_factory=list)  # union of hint target_files
+    evidence_digest: str = ""            # compact, human/LLM-readable evidence summary
+    prompt: str = ""                     # the rendered fix prompt handed to an LLM
+
+
+class FixProposal(BaseModel):
+    """What a FixProvider returns after consuming a RepairRequest. The loop's
+    output. `applied=False` + empty diff is the honest "no fix" answer."""
+    applied: bool = False
+    diff: str | None = None              # unified diff against the project source
+    explanation: str = ""
+    confidence: float = 0.0              # 0..1
+
+
 class VerificationResult(BaseModel):
     """Per PDF Section 21.2."""
     status: str                          # "pass" | "fail" | "inconclusive"
@@ -272,6 +297,7 @@ class VerificationResult(BaseModel):
     evidence: list[RuntimeEvidence]
     failure_classification: str | None = None
     repair_hints: list[RepairHint] = Field(default_factory=list)
+    repair_request: RepairRequest | None = None
     agent_summary: str = ""
 
 
