@@ -43,6 +43,7 @@
 | 7 | ESP32 adapter (idf.py / esptool) + WiFi socket verify | TODO | HW |
 | 8 | Repair-loop v2 — per-check classify + shared KB + LLM-ready RepairRequest | IMPL* | prompt: yes · fixer: LLM |
 | 9 | Break-on-purpose — contract mutation testing (`/contracts/assess`) | DONE | yes |
+| 10 | Closed repair loop — best-of-N + don't-game-the-metric (`run_repair_loop`) | IMPL* | orchestration: yes · provider/reverify: LLM/HW |
 
 ## Known debt
 - Pre-existing ruff nits in the scaffold (unused imports in `verify.py` /
@@ -51,6 +52,23 @@
   scoped and attributable; clean up in a dedicated lint pass.
 
 ## Changelog (newest first)
+
+### Phase 10 — closed repair loop (best-of-N + don't-game-the-metric)
+- Closes the two remaining traps from the vibe-coding confidence loop, on the repair side:
+  - **Keep N attempts alive (best-of-N).** `run_repair_loop` asks the provider for `n`
+    candidate fixes and keeps the strongest *passing* one — a single greedy attempt
+    dead-ends in local optima.
+  - **Never optimize the score (don't-game-the-metric).** A candidate is accepted only
+    if it makes the contract PASS *and* the now-passing contract is still **meaningful**
+    under break-on-purpose (Phase 9 `assess`). A fix that passes by weakening the oracle
+    is rejected with reason `gamed the metric`, even though it's green.
+- All three boundaries are injected and may be sync or async: `provider.propose_fix`
+  (LLM), `reverify` (apply fix + re-run on hardware), `assess` (re-check meaningfulness).
+  The orchestration + selection + anti-gaming logic is deterministic and fully tested;
+  the LLM and hardware stay honest stubs. Returns the best `RepairAttempt`, or the first
+  rejected one (with its reason) so the caller learns *why* — `IMPL*`, not `DONE`.
+- Models: `RepairAttempt`. 3 tests: best-of-N picks highest-confidence passing fix; a
+  metric-gaming fix is rejected; all-fail returns the reason. 64/64 green, ruff clean.
 
 ### Phase 9 — break-on-purpose (contract mutation testing)
 - The confidence-loop keystone applied to verification: *"inject a deliberate bug,

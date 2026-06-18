@@ -233,3 +233,65 @@ async def test_run_verification_attaches_repair_request_on_failure(monkeypatch):
     assert result.repair_request is not None
     assert "BOOT_OK" in result.repair_request.prompt
     assert "boot_msg_missing" in result.repair_request.failure_classifications
+
+
+# ---- closed repair loop: best-of-N + don't-game-the-metric ----
+
+def _passing_result():
+    return _result([_check(ExpectationKind.CONTAINS, status="pass", pattern="BOOT_OK")], status="pass")
+
+
+def test_run_repair_loop_best_of_n_picks_highest_confidence():
+    from evcide.repair import run_repair_loop
+
+    # provider returns a different candidate each call (3 sampled fixes).
+    confs = iter([0.3, 0.9, 0.5])
+    class SamplingProvider:
+        async def propose_fix(self, request: RepairRequest) -> FixProposal:
+            return FixProposal(applied=True, diff="d", confidence=next(confs))
+
+    async def reverify(proposal):           # every fix happens to pass
+        return _passing_result()
+
+    req = repair.build_repair_request(_result([_check(ExpectationKind.CONTAINS, pattern="BOOT_OK")]))
+    best = asyncio.run(run_repair_loop(req, SamplingProvider(), reverify, n=3))
+    assert best is not None and best.accepted is True
+    assert best.proposal.confidence == 0.9   # best-of-N kept the strongest passing fix
+
+
+def test_run_repair_loop_rejects_fix_that_games_the_metric():
+    from evcide.models import MutationReport
+    from evcide.repair import run_repair_loop
+
+    class P:
+        async def propose_fix(self, request):
+            return FixProposal(applied=True, diff="weaken", confidence=0.95)
+
+    async def reverify(proposal):
+        return _passing_result()            # the fix makes it pass...
+
+    async def assess(proposal):
+        # ...but the now-passing contract is no longer meaningful (fix gamed the oracle).
+        return MutationReport(contract_id="c", baseline_passed=True, total_mutants=2,
+                              killed=0, survived=2, score=0.0, meaningful=False)
+
+    req = repair.build_repair_request(_result([_check(ExpectationKind.CONTAINS, pattern="BOOT_OK")]))
+    out = asyncio.run(run_repair_loop(req, P(), reverify, n=1, assess=assess))
+    assert out is not None and out.accepted is False
+    assert "gamed the metric" in out.reason
+
+
+def test_run_repair_loop_none_pass_returns_reason():
+    from evcide.repair import run_repair_loop
+
+    class P:
+        async def propose_fix(self, request):
+            return FixProposal(applied=True, diff="d", confidence=0.5)
+
+    async def reverify(proposal):
+        return _result([_check(ExpectationKind.CONTAINS, pattern="BOOT_OK")])  # still fails
+
+    req = repair.build_repair_request(_result([_check(ExpectationKind.CONTAINS, pattern="BOOT_OK")]))
+    out = asyncio.run(run_repair_loop(req, P(), reverify, n=2))
+    assert out is not None and out.accepted is False
+    assert "did not make the contract pass" in out.reason

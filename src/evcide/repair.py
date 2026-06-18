@@ -18,12 +18,14 @@ Two design rules make it the moat layer rather than per-adapter boilerplate:
 """
 from __future__ import annotations
 
+import inspect
 from typing import Protocol, runtime_checkable
 
 from .models import (
     CheckResult,
     ExpectationKind,
     FixProposal,
+    RepairAttempt,
     RepairHint,
     RepairRequest,
     RuntimeEvent,
@@ -420,3 +422,73 @@ async def attempt_repair(
     """
     request = result.repair_request or build_repair_request(result, framework)
     return await provider.propose_fix(request)
+
+
+# ============ Closed repair loop (best-of-N + don't-game-the-metric) ============
+
+async def _maybe_await(x):
+    """Allow injected boundaries to be either sync or async."""
+    return await x if inspect.isawaitable(x) else x
+
+
+async def run_repair_loop(
+    request: RepairRequest,
+    provider: FixProvider,
+    reverify,
+    n: int = 3,
+    assess=None,
+) -> RepairAttempt | None:
+    """Close the repair loop with the confidence-loop's two remaining traps.
+
+    - **Keep N attempts alive (best-of-N).** Ask the provider for ``n`` candidate
+      fixes; a single greedy attempt dead-ends in local optima (the doc's first trap).
+    - **Never optimize the score (don't-game-the-metric).** A candidate is accepted
+      only if it makes the contract PASS *and* the now-passing contract is still
+      meaningful under break-on-purpose. A fix that passes by weakening the oracle
+      is rejected (the doc's second trap), even though it's green.
+
+    Boundaries are injected and may be sync or async:
+      - ``provider.propose_fix(request) -> FixProposal`` (LLM)
+      - ``reverify(proposal) -> VerificationResult`` (apply the fix, re-run on hardware)
+      - ``assess(proposal) -> MutationReport`` (optional; re-check contract meaningfulness)
+
+    Returns the best accepted RepairAttempt (highest proposal confidence). If none
+    is accepted, returns the first rejected attempt (carrying its reason) so the
+    caller learns *why*; returns None only when the provider produced no candidate.
+    """
+    candidates: list[FixProposal] = []
+    for _ in range(max(1, n)):
+        p = await _maybe_await(provider.propose_fix(request))
+        if p is not None:
+            candidates.append(p)
+
+    attempts: list[RepairAttempt] = []
+    for c in candidates:
+        result = await _maybe_await(reverify(c))
+        status = getattr(result, "status", "fail")
+        if status != "pass":
+            attempts.append(RepairAttempt(
+                proposal=c, reverify_status=status, accepted=False,
+                reason="fix did not make the contract pass",
+            ))
+            continue
+        meaningful: bool | None = None
+        if assess is not None:
+            report = await _maybe_await(assess(c))
+            meaningful = bool(getattr(report, "meaningful", False))
+            if not meaningful:
+                attempts.append(RepairAttempt(
+                    proposal=c, reverify_status=status, contract_still_meaningful=False,
+                    accepted=False,
+                    reason="fix passes but degraded contract meaningfulness — gamed the metric",
+                ))
+                continue
+        attempts.append(RepairAttempt(
+            proposal=c, reverify_status=status, contract_still_meaningful=meaningful,
+            accepted=True, reason="passing fix; contract still meaningful",
+        ))
+
+    accepted = [a for a in attempts if a.accepted]
+    if accepted:
+        return max(accepted, key=lambda a: a.proposal.confidence)
+    return attempts[0] if attempts else None

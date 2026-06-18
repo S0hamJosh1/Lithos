@@ -287,6 +287,19 @@ class FixProposal(BaseModel):
     confidence: float = 0.0              # 0..1
 
 
+class RepairAttempt(BaseModel):
+    """One candidate fix, re-verified and meaningfulness-checked — the output of
+    the closed repair loop (best-of-N + don't-game-the-metric). A fix is accepted
+    only if it makes the contract PASS *and* leaves the contract meaningful (a fix
+    that passes by weakening the oracle gamed the metric and is rejected).
+    """
+    proposal: FixProposal
+    reverify_status: str                 # "pass" | "fail" | "inconclusive"
+    contract_still_meaningful: bool | None = None  # None = not assessed
+    accepted: bool
+    reason: str
+
+
 class SurvivingMutant(BaseModel):
     """A deliberate break the contract FAILED to catch — a theater signal.
 
