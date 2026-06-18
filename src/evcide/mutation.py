@@ -160,6 +160,18 @@ def _densify(n: int = 200) -> Callable[[list[RuntimeEvent]], list[RuntimeEvent]]
     return fn
 
 
+def _inject_silence_gap(delta_ms: int) -> Callable[[list[RuntimeEvent]], list[RuntimeEvent]]:
+    """Push every event after the first later by delta_ms — opens a silent gap
+    right after boot, as if the board hung."""
+    def fn(events: list[RuntimeEvent]) -> list[RuntimeEvent]:
+        if len(events) < 2:
+            return events
+        first, rest = events[0], events[1:]
+        return [first] + [e.model_copy(update={"timestamp_ms": e.timestamp_ms + delta_ms}) for e in rest]
+
+    return fn
+
+
 def _drop_type(ev_type: str) -> Callable[[list[RuntimeEvent]], list[RuntimeEvent]]:
     def fn(events: list[RuntimeEvent]) -> list[RuntimeEvent]:
         return [e for e in events if e.type != ev_type]
@@ -222,6 +234,10 @@ def _mutators_for(exp: Expectation) -> list[Mutator]:
         return [Mutator("freeze_field", f"froze {exp.field!r} to a constant", _freeze_field(exp.field or ""))]
     if k == ExpectationKind.NO_NAN:
         return [Mutator("inject_nan", f"set {exp.field!r} to NaN in one event", _inject_nan(exp.field or ""))]
+    if k == ExpectationKind.NO_TIMEOUT:
+        gap = (exp.duration_ms or 1000) * 10 + 10000
+        return [Mutator("inject_silence_gap", f"opened a silent gap > {exp.duration_ms}ms (board hang)",
+                        _inject_silence_gap(gap))]
     if k == ExpectationKind.BLE_ADVERTISING:
         return [Mutator("drop_advertisements", "removed every advertisement event", _drop_type("advertisement"))]
     if k == ExpectationKind.GATT_SERVICE_PRESENT:

@@ -247,6 +247,27 @@ def _update_no_nan(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
         st.pass_seen = True
 
 
+def _update_no_timeout(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
+    """Liveness — fail if the board goes silent for longer than duration_ms between
+    events (a hang / watchdog reset). Passes once activity is seen with no over-long
+    gap; a single bad gap settles the check FAIL. This is the "did it actually keep
+    running?" oracle the moat needs, distinct from "did it boot?".
+    """
+    limit = st.expectation.duration_ms
+    if limit is None:
+        return
+    last = st.actual.get("last_ts")
+    if last is not None:
+        gap = ev.timestamp_ms - last
+        if gap > limit:
+            st.fail_seen = True
+            st.evidence_event_ids.append(idx)
+            st.message = f"silent for {gap}ms > no_timeout limit {limit}ms"
+    st.actual["last_ts"] = ev.timestamp_ms
+    if not st.fail_seen:
+        st.pass_seen = True
+
+
 def _update_ble_advertising(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
     """Pass when a BLE advertisement is seen; if pattern is set, the advertised
     name must contain it.
@@ -303,6 +324,7 @@ _UPDATERS = {
     ExpectationKind.FIELD_RANGE: _update_field_range,
     ExpectationKind.FIELD_NOT_FROZEN: _update_field_not_frozen,
     ExpectationKind.NO_NAN: _update_no_nan,
+    ExpectationKind.NO_TIMEOUT: _update_no_timeout,
     ExpectationKind.SOCKET_REACHABLE: _update_socket_reachable,
     ExpectationKind.BLE_ADVERTISING: _update_ble_advertising,
     ExpectationKind.GATT_SERVICE_PRESENT: _update_gatt_service_present,

@@ -54,6 +54,18 @@
 
 ## Changelog (newest first)
 
+### Phase 11 — NO_TIMEOUT liveness check (wired + assessable)
+- `NO_TIMEOUT` was declared but had no evaluator, so a liveness expectation silently
+  settled `inconclusive` — a "did the board keep running / not hang?" check that never
+  actually checked. Now wired: fail if the gap between consecutive events exceeds
+  `duration_ms` (silence / hang / watchdog reset); pass on a steady stream. Distinct
+  from "did it boot?" — this is "did it stay alive?".
+- Added the matching break-on-purpose mutator (`inject_silence_gap`) so a NO_TIMEOUT
+  contract is now meaningfulness-testable. `ROS_TOPIC_RATE_HZ` remains the only
+  unassessable kind (needs the ROS receiver, still a stub) — still NAMED in the
+  mutation report, never silently dropped.
+- 2 tests (steady-passes / silence-fails; mutant killed). 71/71 green, ruff clean.
+
 ### Phase 10 — closed repair loop (best-of-N + don't-game-the-metric)
 - Closes the two remaining traps from the vibe-coding confidence loop, on the repair side:
   - **Keep N attempts alive (best-of-N).** `run_repair_loop` asks the provider for `n`

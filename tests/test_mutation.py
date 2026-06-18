@@ -114,14 +114,35 @@ def test_non_passing_baseline_is_rejected():
 
 
 def test_unassessable_kind_is_noted_not_silently_dropped():
-    # NO_TIMEOUT has no evaluator → it settles inconclusive, so the baseline can't
-    # PASS. The report must NAME it (no silent coverage drop), not just say "failed".
+    # ROS_TOPIC_RATE_HZ has no evaluator → it settles inconclusive, so the baseline
+    # can't PASS. The report must NAME it (no silent coverage drop), not just "failed".
     contract = _contract([
         Expectation(kind=ExpectationKind.CONTAINS, pattern="BOOT_OK"),
-        Expectation(kind=ExpectationKind.NO_TIMEOUT),
+        Expectation(kind=ExpectationKind.ROS_TOPIC_RATE_HZ, min_rate_hz=10.0),
     ])
     report = assess_contract(contract, [_ev("BOOT_OK", 0)])
     assert report.baseline_passed is False
     assert report.total_mutants == 0
-    assert "no_timeout" in report.note          # the unassessable kind is surfaced
+    assert "ros_topic_rate_hz" in report.note    # the unassessable kind is surfaced
     assert "baseline" in report.note.lower()
+
+
+# ---- NO_TIMEOUT liveness check (wired evaluator + break-on-purpose) ----
+
+def test_no_timeout_passes_on_steady_stream_fails_on_silence_gap():
+    contract = _contract([Expectation(kind=ExpectationKind.NO_TIMEOUT, duration_ms=500)])
+    steady = [_ev("hb", 200 * i) for i in range(6)]          # gaps of 200ms < 500ms
+    assert overall_status(evaluate_events(contract, steady)) == "pass"
+    hung = [_ev("hb", 0), _ev("hb", 50), _ev("hb", 9000)]    # 8950ms silence
+    checks = evaluate_events(contract, hung)
+    assert checks[0].status == "fail"
+    assert "silent" in checks[0].message
+
+
+def test_no_timeout_contract_is_meaningful_under_mutation():
+    contract = _contract([Expectation(kind=ExpectationKind.NO_TIMEOUT, duration_ms=500)])
+    steady = [_ev("hb", 200 * i) for i in range(6)]
+    report = assess_contract(contract, steady)
+    assert report.baseline_passed is True
+    assert report.meaningful is True            # the injected silence-gap mutant is killed
+    assert report.survived == 0
