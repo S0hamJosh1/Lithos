@@ -41,7 +41,7 @@
 | 5 | BLE receiver via `bleak` (+ ble_advertising / gatt_service_present checks) | IMPL* | checks: yes · receiver: HW |
 | 6 | STM32 adapter (OpenOCD/CubeProgrammer) | TODO | HW |
 | 7 | ESP32 adapter (idf.py / esptool) + WiFi socket verify | TODO | HW |
-| 8 | Repair-loop v2 (classifier → targeted LLM fix prompts) | TODO | partial |
+| 8 | Repair-loop v2 — per-check classify + shared KB + LLM-ready RepairRequest | IMPL* | prompt: yes · fixer: LLM |
 
 ## Known debt
 - Pre-existing ruff nits in the scaffold (unused imports in `verify.py` /
@@ -50,6 +50,30 @@
   scoped and attributable; clean up in a dedicated lint pass.
 
 ## Changelog (newest first)
+
+### Phase 8 — repair loop v2 (*fixer is an injected LLM boundary)
+- New `repair.py`: the classifier→targeted-prompt half of the build→verify→repair
+  loop, built so it is the **shared moat layer** rather than per-adapter boilerplate.
+  - `classify_check()` generalizes the single whole-result verdict into one cause
+    *per failing expectation* (boot/token/rate/field/socket/ble/...).
+  - `REPAIR_KB` is one data-driven table keyed by classification; `FRAMEWORK_SETTINGS`
+    is a thin per-framework overlay (Zephyr `prj.conf` keys). `build_repair_hints()`
+    severity-orders and de-dupes; a whole-stream no-data cause short-circuits.
+  - `build_repair_request()` assembles a deterministic, **LLM-ready `RepairRequest`**
+    (failed checks + evidence digest + likely fixes + a rendered fix prompt) with
+    **zero model calls**, so the whole thing is testable on this box.
+- The model call is the only non-deterministic seam: `FixProvider` Protocol +
+  `NullFixProvider` (refuses honestly rather than faking a patch) + `attempt_repair()`.
+- **Dedup / free-for-new-adapters:** `nrf52.repair_hints` was a ~48-line hint ladder;
+  it now delegates to the shared layer (`framework="zephyr"`, preserving its v1
+  `prj.conf` settings). The stm32/esp32/rp2040 stubs returned `[]`; they now get the
+  full generic hint set for free. The engine attaches `result.repair_request` on any
+  non-pass run, with or without an adapter.
+- **Honest status:** the deterministic prompt builder is done + tested; the LLM
+  *fixer* that consumes the prompt is a stub seam, hence `IMPL*` not `DONE`.
+- 14 tests (`test_repair.py`): per-check classification, KB hints + ordering + dedup,
+  framework overlay, prompt contents, the no-fixer-wired honesty assert, and an
+  end-to-end `run_verification`→`repair_request` attach. 54/54 green, ruff clean.
 
 ### Test hardening — API endpoint coverage
 - Added `test_api_endpoints.py`: `/boards`, `/projects/create` (writes real files
