@@ -287,6 +287,37 @@ class FixProposal(BaseModel):
     confidence: float = 0.0              # 0..1
 
 
+class SurvivingMutant(BaseModel):
+    """A deliberate break the contract FAILED to catch — a theater signal.
+
+    The expectation that should have gone red stayed green when the behavior it
+    guards was mutated, so it isn't actually testing what it claims to.
+    """
+    expectation_label: str               # which expectation should have caught it
+    expectation_kind: str
+    mutator: str                         # the mutation that was applied
+    detail: str                          # what the mutation did to the stream
+
+
+class MutationReport(BaseModel):
+    """Break-on-purpose result (PDF Section 24) — the confidence-loop keystone.
+
+    "Inject one deliberate bug and confirm a test goes red. If nothing fails, the
+    test is theater." Here the 'test' is a VerificationContract and the bug is a
+    mutation of the *evidence stream*, so it runs with no hardware and no rebuild.
+    A contract is only trustworthy once every mutant is killed.
+    """
+    contract_id: str
+    baseline_passed: bool                # mutation testing is only valid on a PASSING baseline
+    total_mutants: int
+    killed: int                          # contract correctly stopped passing
+    survived: int                        # contract still passed = theater
+    score: float                         # killed / total, 0..1 (mutation score)
+    meaningful: bool                     # baseline_passed and survived == 0
+    survivors: list[SurvivingMutant] = Field(default_factory=list)
+    note: str = ""
+
+
 class VerificationResult(BaseModel):
     """Per PDF Section 21.2."""
     status: str                          # "pass" | "fail" | "inconclusive"

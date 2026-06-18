@@ -309,6 +309,70 @@ _UPDATERS = {
 }
 
 
+# ============ Shared evaluation core ============
+#
+# The per-event application and settle logic is identical for the live receiver
+# loop and for offline replay (mutation testing, contract assessment). Factor it
+# once so there is a single source of truth for what an expectation means.
+
+def _apply_event(
+    states: list[ExpectationState], ev: RuntimeEvent, idx: int, first_ev_ms: int
+) -> None:
+    """Apply one event to every still-undecided expectation state."""
+    elapsed = ev.timestamp_ms - first_ev_ms
+    for st in states:
+        if st.pass_seen and st.fail_seen:
+            continue
+        updater = _UPDATERS.get(st.expectation.kind)
+        if updater is None:
+            continue
+        exp = st.expectation
+        # after_ms: ignore warm-up events before the window opens.
+        if exp.after_ms is not None and elapsed < exp.after_ms:
+            continue
+        was_pass = st.pass_seen
+        updater(st, ev, idx)
+        # Record when the check first reached PASS (for within_ms).
+        if st.pass_seen and not was_pass and "pass_at_ms" not in st.actual:
+            st.actual["pass_at_ms"] = elapsed
+
+
+def _settle_all(states: list[ExpectationState]) -> list[CheckResult]:
+    """Settle rate + within_ms deadlines once streaming has stopped."""
+    for st in states:
+        if st.expectation.kind == ExpectationKind.MESSAGE_RATE_HZ:
+            _settle_rate(st)
+    for st in states:
+        _apply_within_ms(st)
+    return [st.settle() for st in states]
+
+
+def overall_status(checks: list[CheckResult]) -> str:
+    """Roll per-check verdicts up to one contract verdict."""
+    return (
+        "pass" if all(c.status == "pass" for c in checks) else
+        "fail" if any(c.status == "fail" for c in checks) else
+        "inconclusive"
+    )
+
+
+def evaluate_events(
+    contract: VerificationContract, events: list[RuntimeEvent]
+) -> list[CheckResult]:
+    """Evaluate a contract against a fixed, in-memory event list — the offline
+    twin of the live loop. Deterministic, synchronous, no receiver, no timeout.
+
+    Timing is relative to the first event, matching the live path (which anchors
+    on the first event seen ≈ boot). This is what mutation testing replays
+    mutated streams through.
+    """
+    states = [ExpectationState(expectation=e) for e in contract.expectations]
+    first_ms = events[0].timestamp_ms if events else 0
+    for idx, ev in enumerate(events):
+        _apply_event(states, ev, idx, first_ms)
+    return _settle_all(states)
+
+
 # ============ Orchestrator ============
 
 async def run_verification(
@@ -350,22 +414,7 @@ async def run_verification(
                     sample_events.append(ev)
                 if sink is not None:
                     await sink({"type": "event", "data": ev.model_dump(mode="json")})
-                elapsed = ev.timestamp_ms - first_ev_ms
-                for st in states:
-                    if st.pass_seen and st.fail_seen:
-                        continue
-                    updater = _UPDATERS.get(st.expectation.kind)
-                    if updater is None:
-                        continue
-                    exp = st.expectation
-                    # after_ms: ignore warm-up events before the window opens.
-                    if exp.after_ms is not None and elapsed < exp.after_ms:
-                        continue
-                    was_pass = st.pass_seen
-                    updater(st, ev, idx)
-                    # Record when the check first reached PASS (for within_ms).
-                    if st.pass_seen and not was_pass and "pass_at_ms" not in st.actual:
-                        st.actual["pass_at_ms"] = elapsed
+                _apply_event(states, ev, idx, first_ev_ms)
                 # short-circuit if every expectation already settled with pass
                 if all(s.pass_seen and not s.fail_seen for s in states):
                     break
@@ -384,21 +433,9 @@ async def run_verification(
     finally:
         stop_event.set()
 
-    # Settle rate expectations now that streaming stopped.
-    for st in states:
-        if st.expectation.kind == ExpectationKind.MESSAGE_RATE_HZ:
-            _settle_rate(st)
-
-    # Enforce within_ms deadlines now that we know when each check passed.
-    for st in states:
-        _apply_within_ms(st)
-
-    checks = [st.settle() for st in states]
-    overall = (
-        "pass" if all(c.status == "pass" for c in checks) else
-        "fail" if any(c.status == "fail" for c in checks) else
-        "inconclusive"
-    )
+    # Settle rate + within_ms deadlines now that streaming stopped.
+    checks = _settle_all(states)
+    overall = overall_status(checks)
 
     failure_class = _classify_failure(overall, checks, events_seen, contract)
     evidence = [

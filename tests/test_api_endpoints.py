@@ -84,3 +84,39 @@ def test_wal_tail_returns_list():
     resp = client.get("/wal/tail?n=5")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+def test_assess_endpoint_flags_theater_and_certifies_meaningful():
+    client = TestClient(create_app())
+
+    def ev(text="", t=0, parsed=None):
+        return {
+            "source": "serial", "timestamp_ms": t, "board_id": "b",
+            "stream_id": "s", "type": "line", "raw": text, "parsed": parsed,
+        }
+
+    receivers = [{"type": "serial"}]
+
+    # Meaningful: a boot-token check whose deliberate break is caught.
+    good = client.post("/contracts/assess", json={
+        "contract": {
+            "id": "good", "target": "t", "receivers": receivers,
+            "expectations": [{"kind": "contains", "pattern": "BOOT_OK"}],
+        },
+        "baseline_events": [ev("BOOT_OK", 0)],
+    })
+    assert good.status_code == 200, good.text
+    assert good.json()["meaningful"] is True
+
+    # Theater: an unbounded field_range passes any value → a surviving mutant.
+    theater = client.post("/contracts/assess", json={
+        "contract": {
+            "id": "theater", "target": "t", "receivers": receivers,
+            "expectations": [{"kind": "field_range", "field": "temp"}],
+        },
+        "baseline_events": [ev("t", i * 100, {"temp": 20.0}) for i in range(3)],
+    })
+    assert theater.status_code == 200, theater.text
+    body = theater.json()
+    assert body["meaningful"] is False
+    assert body["survived"] >= 1

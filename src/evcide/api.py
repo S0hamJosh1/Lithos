@@ -25,11 +25,14 @@ from . import wal
 from .adapters import detect_all_boards, get_adapter_for_profile
 from .classify import classify_project
 from .eventbus import bus
+from .mutation import assess_contract
 from .verify import run_verification
 from .models import (
     DetectedBoard,
+    MutationReport,
     OutputConfig,
     ProjectConfig,
+    RuntimeEvent,
     VerificationContract,
 )
 
@@ -185,6 +188,26 @@ def create_app() -> FastAPI:
             "summary": result.agent_summary,
         })
         return result
+
+    # ----- Contract meaningfulness (break-on-purpose) -----
+
+    class AssessBody(BaseModel):
+        contract: VerificationContract
+        #: A baseline event stream that PASSES the contract. The frontend captures
+        #: this from a known-good run; mutation testing breaks it on purpose to
+        #: prove the contract actually catches the failure.
+        baseline_events: list[RuntimeEvent]
+
+    @app.post("/contracts/assess", response_model=MutationReport)
+    async def assess(body: AssessBody) -> MutationReport:
+        report = assess_contract(body.contract, body.baseline_events)
+        wal.append("assess", {
+            "contract_id": body.contract.id,
+            "meaningful": report.meaningful,
+            "score": report.score,
+            "survived": report.survived,
+        })
+        return report
 
     # ----- WAL -----
 
