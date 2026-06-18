@@ -58,7 +58,10 @@ Void IDE Frontend (separate repo)
           -> Runtime Output Receivers (evcide.receivers)
             -> Serial / BLE / Socket / ROS / File / HIL
           -> Verification Engine     (evcide.verify)
-        -> Diagnostics + Repair Loop (planned)
+          -> Contract DSL            (evcide.dsl — terse text -> contract)
+        -> Diagnostics + Repair Loop (evcide.repair + evcide.mutation)
+          -> classify -> hints -> LLM-ready prompt -> best-of-N + don't-game-the-metric
+          -> break-on-purpose (contract mutation testing)
         -> WAL + Telemetry           (evcide.wal)
 ```
 
@@ -99,27 +102,48 @@ src/evcide/
   runners.py        BuildRunner, FlashRunner — subprocess wrappers
   receivers.py      Serial + File receivers + BLE/Socket/ROS stubs
   verify.py         VerificationEngine + checks (contains, count, rate,
-                    field, numeric, protocol)
+                    field, numeric, liveness, protocol) + offline evaluate_events
+  mutation.py       break-on-purpose: contract mutation testing (assess_contract)
+  repair.py         repair loop: classify -> hints -> RepairRequest (LLM prompt),
+                    NullFixProvider + SettingsFixProvider, run_repair_loop
+  dsl.py            terse text -> VerificationContract (parse_contract)
   api.py            FastAPI app + WebSocket streams
   wal.py            append-only JSONL telemetry
 examples/
   xiao_imu_ble_stream.json   Soham's demo verification contract
   blink_serial.json          basic serial verification contract
 scripts/
-  demo_xiao.py      end-to-end XIAO nRF52840 Sense demo
-tests/              unit tests for verify engine + contracts
+  demo_xiao.py      end-to-end XIAO nRF52840 Sense demo (needs a board / west)
+  demo_loop.py      OFFLINE end-to-end loop demo (no board, no LLM) — run this first
+tests/              unit tests (81 passing; verify, mutation, repair, dsl, api, demo)
 ```
 
 ---
 
+## The verification + repair moat (shipped, hardware-free)
+
+The moat — "did it actually work?" — is built end-to-end and runs with no board:
+
+```
+python scripts/demo_loop.py     # author -> verify(FAIL) -> repair -> fix -> verify(PASS) -> break-on-purpose
+```
+
+* **Verify** — `VerificationContract` of measurable expectations vs. a live or replayed
+  event stream; PASS / FAIL / INCONCLUSIVE with per-check evidence + timing windows + liveness.
+* **Author** — `dsl.py` turns terse text (`contains BOOT_OK within_ms:3000`) into a contract;
+  `POST /contracts/parse`. Honest: bad input is a parse error, never a silent wrong contract.
+* **Break-on-purpose** — `mutation.py` mutates a passing evidence stream to prove the contract
+  would *catch* a real break; a surviving mutant = theater. `POST /contracts/assess`.
+* **Repair** — `repair.py` classifies the failure, emits an LLM-ready fix prompt, and closes the
+  loop with `run_repair_loop` (best-of-N + reject any fix that passes by weakening the contract).
+  `SettingsFixProvider` fixes the mechanical config class with **no LLM**.
+
 ## Roadmap
 
-* **MVP (this slice):** XIAO nRF52840 Sense end-to-end (detect / build / flash / BLE+serial receivers / verify / report)
-* **Tier 1 expansion:** STM32 Nucleo F401RE/F446RE + ESP32 DevKitC adapters
-* **Tier 2 expansion:** RP2040/Pico + nRF52840 DK
-* **Receiver expansion:** WiFi/Socket (ESP32), ROS topic (robotics), HIL (future)
-* **Repair loop v2:** classifier + targeted-fix prompts wired into the LLM provider abstraction
-* **Frontend integration:** Void IDE panels consume the WebSocket streams
+* **DONE (this slice):** XIAO nRF52840 Sense path + the full verify/author/assess/repair loop above.
+* **Needs an LLM endpoint:** a source-level `FixProvider` (the prompt + seam are ready).
+* **Needs hardware:** STM32 / ESP32 / RP2040 adapters, ROS receiver, HIL, on-board re-verify.
+* **Frontend integration:** Void IDE panels consume the WebSocket streams.
 
 ---
 
