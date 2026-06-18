@@ -42,6 +42,7 @@
 | 6 | STM32 adapter (OpenOCD/CubeProgrammer) | TODO | HW |
 | 7 | ESP32 adapter (idf.py / esptool) + WiFi socket verify | TODO | HW |
 | 8 | Repair-loop v2 — per-check classify + shared KB + LLM-ready RepairRequest | IMPL* | prompt: yes · fixer: LLM |
+| 9 | Break-on-purpose — contract mutation testing (`/contracts/assess`) | DONE | yes |
 
 ## Known debt
 - Pre-existing ruff nits in the scaffold (unused imports in `verify.py` /
@@ -50,6 +51,32 @@
   scoped and attributable; clean up in a dedicated lint pass.
 
 ## Changelog (newest first)
+
+### Phase 9 — break-on-purpose (contract mutation testing)
+- The confidence-loop keystone applied to verification: *"inject a deliberate bug,
+  confirm a test goes red; if nothing fails, the test is theater."* A vibe-coded
+  `VerificationContract` can pass vacuously (`contains BOOT_OK` against a boot-looped
+  board; a `field_range` with no bounds passes any value). This proves whether a
+  contract actually catches the failures it claims to.
+- New `mutation.py`: takes a baseline stream that **passes** the contract and mutates
+  the *evidence stream* (not firmware — stays hardware-free): drop the token, freeze
+  the field, force out-of-range, inject NaN, decimate/densify the rate, drop
+  advertisements, strip the service UUID, make the socket unreachable, plus a global
+  empty-stream trivial mutant. Each mutation targets one expectation; if that
+  expectation still passes, it's a **surviving mutant** = theater. `assess_contract()`
+  returns a `MutationReport` (killed / survived / score / `meaningful` / survivors).
+- Refactored the engine for a single source of truth: extracted `_apply_event`,
+  `_settle_all`, `overall_status`, and a pure offline `evaluate_events()` from
+  `run_verification`; the live loop now calls the same code (no behavior change,
+  short-circuit preserved). Mutation replay runs through `evaluate_events`.
+- New endpoint `POST /contracts/assess` (contract + baseline stream → MutationReport).
+- Honesty: unassessable expectation kinds (no evaluator, e.g. `no_timeout`) are NAMED
+  in the report, never silently dropped. `caught = targeted check stops passing`
+  (red OR inconclusive), so a check that degrades to inconclusive still counts.
+- 7 tests (`test_mutation.py` + 1 API): meaningful contract kills every mutant,
+  unbounded `field_range` flagged as theater, empty contract = pure theater,
+  non-passing baseline rejected, rate decimation killed, unassessable-kind noted.
+  61/61 green, ruff clean.
 
 ### Phase 8 — repair loop v2 (*fixer is an injected LLM boundary)
 - New `repair.py`: the classifier→targeted-prompt half of the build→verify→repair
