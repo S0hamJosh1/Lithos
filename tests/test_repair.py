@@ -295,3 +295,75 @@ def test_run_repair_loop_none_pass_returns_reason():
     out = asyncio.run(run_repair_loop(req, P(), reverify, n=2))
     assert out is not None and out.accepted is False
     assert "did not make the contract pass" in out.reason
+
+
+# ---- SettingsFixProvider: the first real (non-LLM) FixProvider ----
+
+def _no_serial_request():
+    res = _result([], failure_classification="no_serial_data")
+    res.repair_hints = repair.build_repair_hints(res, framework="zephyr")
+    return repair.build_repair_request(res)
+
+
+def test_settings_provider_proposes_kconfig_diff(tmp_path):
+    (tmp_path / "prj.conf").write_text("CONFIG_PRINTK=y\nCONFIG_LOG=y\n", encoding="utf-8")
+    provider = repair.SettingsFixProvider(tmp_path)
+    proposal = asyncio.run(provider.propose_fix(_no_serial_request()))
+    assert proposal.diff is not None
+    assert "+CONFIG_UART_CONSOLE=y" in proposal.diff
+    assert "+CONFIG_USB_DEVICE_STACK=y" in proposal.diff
+    assert proposal.confidence == 0.6
+
+
+def test_settings_provider_apply_writes_config(tmp_path):
+    (tmp_path / "prj.conf").write_text("CONFIG_PRINTK=y\n", encoding="utf-8")
+    provider = repair.SettingsFixProvider(tmp_path)
+    changed = provider.apply(_no_serial_request())
+    assert changed == ["prj.conf"]
+    after = (tmp_path / "prj.conf").read_text(encoding="utf-8")
+    assert "CONFIG_UART_CONSOLE=y" in after
+    assert "CONFIG_USB_DEVICE_STACK=y" in after
+    assert "CONFIG_PRINTK=y" in after  # existing keys preserved
+
+
+def test_settings_provider_honest_when_no_config_fix(tmp_path):
+    # boot_msg_missing has no target_settings → source-level, not mechanical.
+    res = _result([_check(ExpectationKind.CONTAINS, pattern="BOOT_OK",
+                          message="not satisfied within within_ms deadline 3000ms")])
+    res.repair_hints = repair.build_repair_hints(res, framework="zephyr")
+    req = repair.build_repair_request(res)
+    provider = repair.SettingsFixProvider(tmp_path)
+    proposal = asyncio.run(provider.propose_fix(req))
+    assert proposal.diff is None
+    assert proposal.confidence == 0.0
+    assert "LLM" in proposal.explanation  # honestly defers, never fakes a source fix
+
+
+def test_settings_provider_idempotent_when_already_set(tmp_path):
+    (tmp_path / "prj.conf").write_text(
+        "CONFIG_UART_CONSOLE=y\nCONFIG_USB_DEVICE_STACK=y\n", encoding="utf-8")
+    provider = repair.SettingsFixProvider(tmp_path)
+    proposal = asyncio.run(provider.propose_fix(_no_serial_request()))
+    assert proposal.diff is None  # nothing to change → no fix proposed
+    assert provider.apply(_no_serial_request()) == []
+
+
+def test_closed_loop_repairs_config_class_without_llm_or_hardware(tmp_path):
+    # End-to-end: a no_serial_data failure is repaired by the deterministic config
+    # provider, the loop accepts it, and prj.conf is actually fixed — no LLM, no board.
+    from evcide.repair import run_repair_loop
+
+    (tmp_path / "prj.conf").write_text("CONFIG_PRINTK=y\n", encoding="utf-8")
+    provider = repair.SettingsFixProvider(tmp_path)
+    req = _no_serial_request()
+
+    async def reverify(proposal):
+        # A real reverify applies the diff then re-runs on hardware; here we apply
+        # the config and simulate the board now talking.
+        provider.apply(req)
+        return _passing_result()
+
+    best = asyncio.run(run_repair_loop(req, provider, reverify, n=1))
+    assert best is not None and best.accepted is True
+    after = (tmp_path / "prj.conf").read_text(encoding="utf-8")
+    assert "CONFIG_UART_CONSOLE=y" in after and "CONFIG_USB_DEVICE_STACK=y" in after

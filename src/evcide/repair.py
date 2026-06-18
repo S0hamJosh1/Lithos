@@ -18,7 +18,10 @@ Two design rules make it the moat layer rather than per-adapter boilerplate:
 """
 from __future__ import annotations
 
+import difflib
 import inspect
+import re
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from .models import (
@@ -409,6 +412,89 @@ class NullFixProvider:
             "No FixProvider configured. Wire an LLM-backed FixProvider to close the "
             "repair loop; the RepairRequest (request.prompt) is ready to send."
         )
+
+
+_KCONFIG_KEY = re.compile(r"^\s*([A-Za-z0-9_]+)\s*=")
+
+
+def _apply_kv(text: str, kv: dict[str, object]) -> list[str]:
+    """Return the file's lines with `kv` set: replace an existing `KEY=...` line,
+    append a new one otherwise. Mirrors how a Kconfig fragment is edited."""
+    lines = text.splitlines()
+    present: dict[str, int] = {}
+    for i, ln in enumerate(lines):
+        m = _KCONFIG_KEY.match(ln)
+        if m:
+            present[m.group(1)] = i
+    out = list(lines)
+    for key, val in kv.items():
+        newline = f"{key}={val}"
+        if key in present:
+            out[present[key]] = newline
+        else:
+            out.append(newline)
+    return out
+
+
+def _settings_changes(root: Path, hints: list[RepairHint]) -> dict[str, tuple[str, list[str]]]:
+    """{filename: (original_text, new_lines)} for every config file a hint wants to
+    edit — but only where the edit actually changes something."""
+    wanted: dict[str, dict[str, object]] = {}
+    for h in hints:
+        for fname, kv in (h.target_settings or {}).items():
+            wanted.setdefault(fname, {}).update(kv)
+    changes: dict[str, tuple[str, list[str]]] = {}
+    for fname, kv in wanted.items():
+        path = root / fname
+        orig = path.read_text(encoding="utf-8") if path.exists() else ""
+        new_lines = _apply_kv(orig, kv)
+        if new_lines != orig.splitlines():
+            changes[fname] = (orig, new_lines)
+    return changes
+
+
+class SettingsFixProvider:
+    """The first *real* FixProvider — deterministic, no LLM, no hardware.
+
+    Repair hints already carry framework `target_settings` (e.g. Zephyr
+    `prj.conf` keys). Those fixes are mechanical: enable a Kconfig symbol. This
+    provider turns them into an actual config diff and can apply it. It handles
+    only the config-class of failures; a hint with no `target_settings`
+    (source-level bug) is honestly left to an LLM provider — it never fakes a
+    source fix.
+    """
+
+    def __init__(self, project_root: str | Path):
+        self.root = Path(project_root)
+
+    async def propose_fix(self, request: RepairRequest) -> FixProposal:
+        changes = _settings_changes(self.root, request.hints)
+        if not changes:
+            return FixProposal(
+                applied=False, diff=None, confidence=0.0,
+                explanation="No mechanical config fix available; this failure needs a "
+                            "source-level change — wire an LLM FixProvider (request.prompt is ready).",
+            )
+        diffs, files = [], []
+        for fname, (orig, new_lines) in changes.items():
+            diff = "\n".join(difflib.unified_diff(
+                orig.splitlines(), new_lines,
+                fromfile=f"a/{fname}", tofile=f"b/{fname}", lineterm="",
+            ))
+            diffs.append(diff)
+            files.append(fname)
+        return FixProposal(
+            applied=False, diff="\n".join(diffs), confidence=0.6,
+            explanation=f"Mechanical config fix for {', '.join(files)} from repair hints "
+                        "(enables the Kconfig symbols the verification flagged as missing).",
+        )
+
+    def apply(self, request: RepairRequest) -> list[str]:
+        """Write the config changes to disk. Returns the files changed."""
+        changes = _settings_changes(self.root, request.hints)
+        for fname, (_orig, new_lines) in changes.items():
+            (self.root / fname).write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        return list(changes.keys())
 
 
 async def attempt_repair(

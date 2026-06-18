@@ -44,6 +44,7 @@
 | 8 | Repair-loop v2 — per-check classify + shared KB + LLM-ready RepairRequest | IMPL* | prompt: yes · fixer: LLM |
 | 9 | Break-on-purpose — contract mutation testing (`/contracts/assess`) | DONE | yes |
 | 10 | Closed repair loop — best-of-N + don't-game-the-metric (`run_repair_loop`) | IMPL* | orchestration: yes · provider/reverify: LLM/HW |
+| 10b | `SettingsFixProvider` — real deterministic config-class fixer (no LLM) | DONE | yes |
 
 ## Known debt
 - Pre-existing ruff nits in the scaffold (unused imports in `verify.py` /
@@ -69,6 +70,19 @@
   rejected one (with its reason) so the caller learns *why* — `IMPL*`, not `DONE`.
 - Models: `RepairAttempt`. 3 tests: best-of-N picks highest-confidence passing fix; a
   metric-gaming fix is rejected; all-fail returns the reason. 64/64 green, ruff clean.
+
+### Phase 10b — `SettingsFixProvider` (first real FixProvider)
+- The repair loop's providers were all stubs. This is the first **real** one, and it
+  needs **no LLM and no hardware**: repair hints already carry framework `target_settings`
+  (Zephyr `prj.conf` Kconfig symbols), and those fixes are *mechanical* — enable the symbol.
+  The provider turns them into an actual config diff (`difflib.unified_diff`) and can `apply()`
+  it (replace an existing `KEY=` line, append otherwise; idempotent — no diff when already set).
+- **Honest boundary preserved:** a hint with no `target_settings` (source-level bug) yields a
+  `FixProposal(confidence=0.0)` that explicitly defers to an LLM provider — it never fakes a
+  source fix. Lazy-senior-dev: the cheapest class of repair shouldn't pay for a model call.
+- End-to-end test proves the **whole loop closes with zero LLM and zero hardware**: a
+  `no_serial_data` failure → config diff → `run_repair_loop` accepts → `prj.conf` actually fixed.
+- 5 tests (4 provider + 1 closed-loop integration). 69/69 green, ruff clean.
 
 ### Phase 9 — break-on-purpose (contract mutation testing)
 - The confidence-loop keystone applied to verification: *"inject a deliberate bug,
