@@ -48,6 +48,7 @@
 | 11 | `NO_TIMEOUT` liveness check wired + assessable | DONE | yes |
 | 12 | Contract DSL — terse text → `VerificationContract` (`/contracts/parse`) | DONE | yes |
 | 13 | Capture & replay — record a run to JSONL, faithfully replay offline | DONE | yes |
+| 14 | Live-path replay + workspace facade + DSL examples (Bucket A) | DONE | yes |
 
 
 ## Known debt
@@ -57,6 +58,18 @@
   scoped and attributable; clean up in a dedicated lint pass.
 
 ## Changelog (newest first)
+
+### Phase 14 — Bucket A (live-path replay · workspace facade · DSL examples)
+- **Live-path replay:** the FILE receiver now detects a `.jsonl` capture and replays full
+  `RuntimeEvent`s (faithful timestamps) through `run_verification`'s live path, not just
+  `evaluate_events`. **Bug fixed in passing:** `NO_TIMEOUT` set `pass_seen` per-event, so the
+  live loop's "all passed → short-circuit" fired after the first event and a later hang was
+  missed — liveness now settles over the whole window (like rate).
+- **Workspace facade** (`workspace.py`): one project-lifecycle surface (create / import / detect)
+  over the adapter registry + classifier; `api.py` `/projects/*` now routes through it (DRY).
+  Fills the `evcide.workspace` box the architecture diagram already named.
+- **DSL examples** (`examples/*.evc`) with a parse regression guard so they can't rot.
+- 7 tests across the three. 92/92 green, ruff clean.
 
 ### Phase 13 — capture & replay (faithful, offline)
 - The replay half of the moat without a board: `CaptureSink` attaches to
