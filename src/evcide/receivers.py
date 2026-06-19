@@ -164,6 +164,22 @@ async def file_receiver_stream(
     path = cfg.file_path
     if not path:
         raise ValueError("file receiver requires config.file_path")
+
+    # Faithful replay: a .jsonl capture (from evcide.capture) is a stream of full
+    # RuntimeEvents — replay them with original timestamp/type/raw/parsed intact
+    # (timing checks depend on it), rebinding only the session ids. Finite: yield
+    # once and stop. This is distinct from the line-tailing CSV/log path below.
+    if path.endswith(".jsonl"):
+        from .capture import load_events
+        for ev in load_events(path):
+            if stop_event.is_set():
+                return
+            yield ev.model_copy(update={
+                "stream_id": session.stream_id, "board_id": session.board_id,
+            })
+            await asyncio.sleep(0)
+        return
+
     pos = 0
     while not stop_event.is_set():
         try:

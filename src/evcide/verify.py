@@ -264,8 +264,9 @@ def _update_no_timeout(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None
             st.evidence_event_ids.append(idx)
             st.message = f"silent for {gap}ms > no_timeout limit {limit}ms"
     st.actual["last_ts"] = ev.timestamp_ms
-    if not st.fail_seen:
-        st.pass_seen = True
+    # NOTE: do NOT set pass_seen during streaming — liveness is a whole-window
+    # verdict (like rate). Settling early would let the live-loop short-circuit
+    # after the first event and miss a later hang. Pass is decided in _settle_all.
 
 
 def _update_ble_advertising(st: ExpectationState, ev: RuntimeEvent, idx: int) -> None:
@@ -364,6 +365,10 @@ def _settle_all(states: list[ExpectationState]) -> list[CheckResult]:
     for st in states:
         if st.expectation.kind == ExpectationKind.MESSAGE_RATE_HZ:
             _settle_rate(st)
+        elif st.expectation.kind == ExpectationKind.NO_TIMEOUT:
+            # Liveness passes iff it saw at least one event and never a too-long gap.
+            if not st.fail_seen and "last_ts" in st.actual:
+                st.pass_seen = True
     for st in states:
         _apply_within_ms(st)
     return [st.settle() for st in states]

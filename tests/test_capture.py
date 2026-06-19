@@ -86,3 +86,53 @@ def test_capture_sink_records_events_only(tmp_path):
     assert sink.count == 2
     assert len(events) == 2
     assert events[0].raw == "BOOT_OK" and events[1].timestamp_ms == 210
+
+
+def test_run_verification_replays_capture_through_live_path(tmp_path):
+    # A .jsonl capture replays faithfully through run_verification's LIVE path
+    # (streaming + sink + timeout), not just evaluate_events. The contract mixes a
+    # within_ms boot check and a whole-window liveness check, so this also pins that
+    # NO_TIMEOUT does not short-circuit the loop after the first event.
+    from evcide.models import OutputConfig, OutputSession, now_ms
+    from evcide.verify import run_verification
+
+    events = [_ev("BOOT_OK", 100)] + [_ev("hb", 200 * i) for i in range(1, 6)]  # 200..1000
+    path = tmp_path / "cap.jsonl"
+    dump_events(path, events)
+
+    contract = VerificationContract(
+        id="replay", target="t", timeout_ms=2000,
+        receivers=[ReceiverDef(type=ReceiverKind.FILE)],
+        expectations=[
+            Expectation(kind=ExpectationKind.CONTAINS, pattern="BOOT_OK", within_ms=500),
+            Expectation(kind=ExpectationKind.NO_TIMEOUT, duration_ms=500),
+        ],
+    )
+    session = OutputSession(
+        stream_id="rep", receiver=ReceiverKind.FILE, board_id="b", started_at_ms=now_ms(),
+        config=OutputConfig(receiver=ReceiverKind.FILE, file_path=str(path)),
+    )
+    result = asyncio.run(run_verification(session, contract))
+    assert result.status == "pass"
+    assert result.evidence[0].event_count == 6   # whole stream consumed (no premature short-circuit)
+
+
+def test_replay_detects_hang_through_live_path(tmp_path):
+    # A capture with a mid-stream silence gap must FAIL liveness on replay.
+    from evcide.models import OutputConfig, OutputSession, now_ms
+    from evcide.verify import run_verification
+
+    events = [_ev("BOOT_OK", 0), _ev("hb", 100), _ev("hb", 5000)]  # 4900ms silence
+    path = tmp_path / "hang.jsonl"
+    dump_events(path, events)
+    contract = VerificationContract(
+        id="hang", target="t", timeout_ms=2000,
+        receivers=[ReceiverDef(type=ReceiverKind.FILE)],
+        expectations=[Expectation(kind=ExpectationKind.NO_TIMEOUT, duration_ms=500)],
+    )
+    session = OutputSession(
+        stream_id="h", receiver=ReceiverKind.FILE, board_id="b", started_at_ms=now_ms(),
+        config=OutputConfig(receiver=ReceiverKind.FILE, file_path=str(path)),
+    )
+    result = asyncio.run(run_verification(session, contract))
+    assert result.status == "fail"
