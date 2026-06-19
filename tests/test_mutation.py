@@ -146,3 +146,43 @@ def test_no_timeout_contract_is_meaningful_under_mutation():
     assert report.baseline_passed is True
     assert report.meaningful is True            # the injected silence-gap mutant is killed
     assert report.survived == 0
+
+
+# ---- minimality: is every expectation load-bearing? (leave-one-out) ----
+
+def test_minimal_contract_every_expectation_load_bearing():
+    contract = _contract([
+        Expectation(kind=ExpectationKind.CONTAINS, pattern="BOOT_OK"),
+        Expectation(kind=ExpectationKind.FIELD_NOT_FROZEN, field="accel_x"),
+    ])
+    baseline = _boot_and_motion_stream()
+    from evcide.mutation import assess_minimality
+    report = assess_minimality(contract, baseline)
+    assert report.baseline_passed is True
+    assert report.minimal is True
+    assert report.redundant == []
+    assert all(c.load_bearing for c in report.expectations)
+
+
+def test_redundant_expectation_is_flagged():
+    # contains BOOT_OK and count_min BOOT_OK 1 both catch dropping BOOT_OK — neither
+    # uniquely. Both should be flagged redundant (no unique kill).
+    contract = _contract([
+        Expectation(kind=ExpectationKind.CONTAINS, pattern="BOOT_OK"),
+        Expectation(kind=ExpectationKind.COUNT_MIN, pattern="BOOT_OK", count=1),
+    ])
+    baseline = [_ev("BOOT_OK", 0), _ev("hb", 200), _ev("hb", 400)]
+    from evcide.mutation import assess_minimality
+    report = assess_minimality(contract, baseline)
+    assert report.baseline_passed is True
+    assert report.minimal is False
+    assert set(report.redundant) == {0, 1}
+    assert "no unique kill" in report.note
+
+
+def test_minimality_rejects_non_passing_baseline():
+    contract = _contract([Expectation(kind=ExpectationKind.CONTAINS, pattern="NEVER")])
+    from evcide.mutation import assess_minimality
+    report = assess_minimality(contract, [_ev("BOOT_OK", 0)])
+    assert report.baseline_passed is False
+    assert report.minimal is False

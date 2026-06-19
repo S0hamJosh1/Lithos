@@ -25,7 +25,9 @@ from typing import Callable
 
 from .models import (
     Expectation,
+    ExpectationCoverage,
     ExpectationKind,
+    MinimalityReport,
     MutationReport,
     RuntimeEvent,
     SurvivingMutant,
@@ -312,4 +314,57 @@ def assess_contract(
         score=round(killed / total, 3) if total else 0.0,
         meaningful=(len(survivors) == 0),
         survivors=survivors, note=note,
+    )
+
+
+def assess_minimality(
+    contract: VerificationContract, baseline_events: list[RuntimeEvent]
+) -> MinimalityReport:
+    """Leave-one-out: is every expectation load-bearing? (the dual of break-on-purpose).
+
+    For each expectation, apply the mutation(s) that target it; if the FULL contract
+    catches the break but the contract WITHOUT that expectation does NOT, the
+    expectation is the *unique* catcher (load-bearing). An expectation that uniquely
+    catches nothing is redundant — the contract would catch the same breaks without it
+    (overlapping checks) — or a coverage gap. Pairs/combos add nothing here: a combined
+    mutation is caught whenever each single one is, so single mutations suffice.
+    """
+    if overall_status(evaluate_events(contract, baseline_events)) != "pass":
+        return MinimalityReport(
+            contract_id=contract.id, baseline_passed=False, minimal=False,
+            note="baseline stream did not PASS; provide a passing stream before assessing.",
+        )
+
+    exps = contract.expectations
+    coverage = [
+        ExpectationCoverage(index=i, kind=e.kind.value, label=e.label or e.kind.value,
+                            unique_kills=0, load_bearing=False)
+        for i, e in enumerate(exps)
+    ]
+    for i, e in enumerate(exps):
+        if e.kind not in _ASSESSABLE:
+            continue
+        reduced = contract.model_copy(
+            update={"expectations": [x for j, x in enumerate(exps) if j != i]}
+        )
+        for mut in _mutators_for(e):
+            mutant = mut.fn(baseline_events)
+            caught_full = overall_status(evaluate_events(contract, mutant)) != "pass"
+            if not caught_full:
+                continue
+            # No other expectation catches it iff the reduced contract now PASSES.
+            caught_reduced = overall_status(evaluate_events(reduced, mutant)) != "pass"
+            if not caught_reduced:
+                coverage[i].unique_kills += 1
+
+    for c in coverage:
+        c.load_bearing = c.unique_kills > 0
+    redundant = [c.index for c in coverage if not c.load_bearing]
+    note = ""
+    if redundant:
+        labels = ", ".join(f"#{c.index} {c.label}" for c in coverage if c.index in redundant)
+        note = f"redundant/uncovered expectations (no unique kill): {labels}"
+    return MinimalityReport(
+        contract_id=contract.id, baseline_passed=True, expectations=coverage,
+        redundant=redundant, minimal=(not redundant), note=note,
     )

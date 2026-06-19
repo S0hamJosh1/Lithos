@@ -331,6 +331,28 @@ class MutationReport(BaseModel):
     note: str = ""
 
 
+class ExpectationCoverage(BaseModel):
+    """Whether one expectation is load-bearing — i.e. it uniquely catches at least
+    one deliberate break that no other expectation in the contract catches."""
+    index: int
+    kind: str
+    label: str
+    unique_kills: int                    # breaks ONLY this expectation caught
+    load_bearing: bool                   # unique_kills > 0
+
+
+class MinimalityReport(BaseModel):
+    """Leave-one-out analysis (the dual of break-on-purpose): is every expectation
+    necessary? An expectation with no unique kill is redundant or a coverage gap —
+    the contract would catch the same breaks without it."""
+    contract_id: str
+    baseline_passed: bool
+    expectations: list[ExpectationCoverage] = Field(default_factory=list)
+    redundant: list[int] = Field(default_factory=list)   # indices with 0 unique kills
+    minimal: bool = False                # no redundant expectations
+    note: str = ""
+
+
 class VerificationResult(BaseModel):
     """Per PDF Section 21.2."""
     status: str                          # "pass" | "fail" | "inconclusive"
