@@ -47,6 +47,7 @@
 | 10b | `SettingsFixProvider` — real deterministic config-class fixer (no LLM) | DONE | yes |
 | 11 | `NO_TIMEOUT` liveness check wired + assessable | DONE | yes |
 | 12 | Contract DSL — terse text → `VerificationContract` (`/contracts/parse`) | DONE | yes |
+| 13 | Capture & replay — record a run to JSONL, faithfully replay offline | DONE | yes |
 
 
 ## Known debt
@@ -56,6 +57,20 @@
   scoped and attributable; clean up in a dedicated lint pass.
 
 ## Changelog (newest first)
+
+### Phase 13 — capture & replay (faithful, offline)
+- The replay half of the moat without a board: `CaptureSink` attaches to
+  `run_verification(..., sink=)` and records the live stream to JSONL as it arrives;
+  `load_events()` reads it back into faithful `RuntimeEvent`s. Capture a real run ONCE,
+  then feed it into `evaluate_events` / `assess_contract` forever — offline regression +
+  break-on-purpose baselines, no board needed again.
+- **Faithful by design:** original `timestamp_ms` / `type` / `raw` / `parsed` preserved,
+  because `within_ms` / rate / `no_timeout` depend on them. (The existing line-tailing
+  `file_receiver_stream` re-stamps wall-clock and is for raw CSV/logs — a test pins that a
+  late-boot `within_ms` correctly FAILS on replayed timestamps, which a re-stamp would hide.)
+- A captured passing run IS a break-on-purpose baseline — `assess_contract(c, load_events(p))`.
+- 4 tests (`test_capture.py`): faithful round-trip, replay→engine+assess, timing survives
+  replay, sink records events-only. 85/85 green, ruff clean.
 
 ### Phase 12 — contract DSL (terse text → contract)
 - The spec's "prompt → measurable expectations" (PDF 22.1), deterministic subset: one

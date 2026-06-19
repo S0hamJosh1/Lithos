@@ -107,6 +107,7 @@ src/evcide/
   repair.py         repair loop: classify -> hints -> RepairRequest (LLM prompt),
                     NullFixProvider + SettingsFixProvider, run_repair_loop
   dsl.py            terse text -> VerificationContract (parse_contract)
+  capture.py        record a run to JSONL (CaptureSink) + faithful replay (load_events)
   api.py            FastAPI app + WebSocket streams
   wal.py            append-only JSONL telemetry
 examples/
