@@ -1,0 +1,12 @@
+# ESP32 WiFi telemetry contract (DSL form) — socket receiver
+@id esp32-wifi-telemetry
+@target esp32_devkitc
+@receiver socket
+@timeout 15000
+
+socket_reachable
+contains READY within_ms:5000
+rate min:5
+field temp range:-40..125
+field temp no_nan
+no_timeout 2000

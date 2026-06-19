@@ -107,3 +107,13 @@ def test_dsl_output_is_assessable_end_to_end():
     ]
     assert overall_status(evaluate_events(c, events)) == "pass"
     assert assess_contract(c, events).meaningful is True
+
+
+def test_all_example_evc_files_parse():
+    # Every shipped examples/*.evc must parse — a regression guard so they can't rot.
+    examples = sorted((ROOT / "examples").glob("*.evc"))
+    assert examples, "no .evc examples found"
+    for ex in examples:
+        c = parse_contract(ex.read_text(encoding="utf-8"))
+        assert c.expectations, f"{ex.name} produced no expectations"
+        assert c.id, f"{ex.name} has no id"

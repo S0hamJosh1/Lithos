@@ -111,8 +111,9 @@ src/evcide/
   api.py            FastAPI app + WebSocket streams
   wal.py            append-only JSONL telemetry
 examples/
-  xiao_imu_ble_stream.json   Soham's demo verification contract
-  blink_serial.json          basic serial verification contract
+  xiao_imu_ble_stream.json   Soham's demo verification contract (JSON)
+  blink_serial.json          basic serial verification contract (JSON)
+  *.evc                      same contracts in the terse DSL (POST /contracts/parse)
 scripts/
   demo_xiao.py      end-to-end XIAO nRF52840 Sense demo (needs a board / west)
   demo_loop.py      OFFLINE end-to-end loop demo (no board, no LLM) — run this first

@@ -1,0 +1,9 @@
+# Minimal serial blink/heartbeat contract (DSL form)
+@id blink-serial
+@target seeed_xiao_nrf52840_sense
+@receiver serial
+@timeout 8000
+
+contains BOOT_OK within_ms:2000
+count_min HEARTBEAT 3
+not_contains ERROR

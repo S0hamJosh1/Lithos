@@ -1,0 +1,12 @@
+# XIAO nRF52840 Sense — boot + live IMU contract (DSL form)
+# Run: POST /contracts/parse  (or evcide.dsl.parse_contract)
+@id xiao-boot-imu
+@target seeed_xiao_nrf52840_sense
+@receiver serial
+@timeout 12000
+
+contains BOOT_OK within_ms:3000
+no_timeout 1500
+field accel_x not_frozen
+field accel_x range:-20..20
+not_contains PANIC
