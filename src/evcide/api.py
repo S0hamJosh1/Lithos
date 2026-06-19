@@ -23,8 +23,8 @@ from pydantic import BaseModel
 
 from . import wal
 from .adapters import detect_all_boards, get_adapter_for_profile
-from .classify import classify_project
 from .eventbus import bus
+from . import workspace
 from .dsl import DSLError, parse_contract
 from .mutation import assess_contract
 from .verify import run_verification
@@ -66,9 +66,7 @@ def create_app() -> FastAPI:
 
     @app.post("/projects/create")
     async def create_project(body: CreateProjectBody):
-        adapter = get_adapter_for_profile(body.profile_id)
-        cfg = ProjectConfig(**body.model_dump())
-        result = await adapter.create_project(cfg)
+        result = await workspace.create_project(ProjectConfig(**body.model_dump()))
         wal.append("project.create", {"profile_id": body.profile_id,
                                       "success": result.success,
                                       "root": result.root})
@@ -80,21 +78,12 @@ def create_app() -> FastAPI:
 
     @app.post("/projects/import")
     async def import_project(body: ImportProjectBody):
-        # If profile_id is omitted, classify the project from on-disk markers.
-        classification = None
-        profile_id = body.profile_id
-        if not profile_id:
-            classification = classify_project(body.path)
-            if classification is None:
-                raise HTTPException(
-                    422, "could not classify project; pass profile_id explicitly"
-                )
-            profile_id = classification.profile_id
-        adapter = get_adapter_for_profile(profile_id)
         try:
-            meta = await adapter.import_project(body.path)
+            meta, classification = await workspace.import_project(body.path, body.profile_id)
+        except workspace.ClassificationError as e:
+            raise HTTPException(422, str(e)) from None
         except NotImplementedError as e:
-            raise HTTPException(501, str(e))
+            raise HTTPException(501, str(e)) from None
         wal.append("project.import", {
             **meta.model_dump(),
             "classified": classification.model_dump() if classification else None,
