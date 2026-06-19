@@ -26,10 +26,11 @@ from .adapters import detect_all_boards, get_adapter_for_profile
 from .eventbus import bus
 from . import workspace
 from .dsl import DSLError, parse_contract
-from .mutation import assess_contract
+from .mutation import assess_contract, assess_minimality
 from .verify import run_verification
 from .models import (
     DetectedBoard,
+    MinimalityReport,
     MutationReport,
     OutputConfig,
     ProjectConfig,
@@ -215,6 +216,19 @@ def create_app() -> FastAPI:
             "meaningful": report.meaningful,
             "score": report.score,
             "survived": report.survived,
+        })
+        return report
+
+    @app.post("/contracts/minimality", response_model=MinimalityReport)
+    async def minimality(body: AssessBody) -> MinimalityReport:
+        # Leave-one-out dual of /assess: is every expectation load-bearing, or
+        # does the contract carry redundant / non-covering checks? Same input
+        # shape (contract + a PASSING baseline stream).
+        report = assess_minimality(body.contract, body.baseline_events)
+        wal.append("minimality", {
+            "contract_id": body.contract.id,
+            "minimal": report.minimal,
+            "redundant": report.redundant,
         })
         return report
 

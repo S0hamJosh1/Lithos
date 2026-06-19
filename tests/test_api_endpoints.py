@@ -122,6 +122,49 @@ def test_assess_endpoint_flags_theater_and_certifies_meaningful():
     assert body["survived"] >= 1
 
 
+def test_minimality_endpoint_flags_redundant_and_certifies_minimal():
+    client = TestClient(create_app())
+
+    def ev(text="", t=0, parsed=None):
+        return {
+            "source": "serial", "timestamp_ms": t, "board_id": "b",
+            "stream_id": "s", "type": "line", "raw": text, "parsed": parsed,
+        }
+
+    receivers = [{"type": "serial"}]
+
+    # Minimal: a single load-bearing boot-token check — removing it loses coverage.
+    minimal = client.post("/contracts/minimality", json={
+        "contract": {
+            "id": "minimal", "target": "t", "receivers": receivers,
+            "expectations": [{"kind": "contains", "pattern": "BOOT_OK"}],
+        },
+        "baseline_events": [ev("BOOT_OK", 0)],
+    })
+    assert minimal.status_code == 200, minimal.text
+    body = minimal.json()
+    assert body["minimal"] is True
+    assert body["redundant"] == []
+    assert body["expectations"][0]["load_bearing"] is True
+
+    # Redundant: two identical checks — neither uniquely catches its break, so the
+    # contract carries dead weight (the dual finding to break-on-purpose theater).
+    dup = client.post("/contracts/minimality", json={
+        "contract": {
+            "id": "dup", "target": "t", "receivers": receivers,
+            "expectations": [
+                {"kind": "contains", "pattern": "BOOT_OK"},
+                {"kind": "contains", "pattern": "BOOT_OK"},
+            ],
+        },
+        "baseline_events": [ev("BOOT_OK", 0)],
+    })
+    assert dup.status_code == 200, dup.text
+    body = dup.json()
+    assert body["minimal"] is False
+    assert 0 in body["redundant"] and 1 in body["redundant"]
+
+
 def test_parse_endpoint_builds_contract_and_400s_on_bad_dsl():
     client = TestClient(create_app())
     ok = client.post("/contracts/parse", json={
